@@ -1,0 +1,91 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# YOLO / Training outputs (keep tracked selectively)
+runs/
+outputs/
+wandb/
+
+# Datasets (too large for git)
+datasets/crack-seg/
+datasets/road_damage/
+
+# Model weights (too large for git)
+
+*.onnx
+*.engine
+*.tflite
+
+# Keep the dataset configuration, but not the dataset itself
+!datasets/road_damage/
+datasets/road_damage/*
+!datasets/road_damage/road_damage.yaml
+
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+
+# Node.js / Next.js frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
+# Database
+*.db
+*.sqlite3
+
+# Expo repository files
+.expo/
+node_modules/
+web-build/
+expo-env.d.ts
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.pem
+*.tsbuildinfo
+/ios
+/android
+
+# Road AI generated files and local datasets
+training_runs/
+datasets/raw/
+datasets/**/labels/*.cache
+*.cache

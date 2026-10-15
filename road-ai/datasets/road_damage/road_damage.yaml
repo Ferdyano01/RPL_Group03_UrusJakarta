@@ -1,0 +1,13 @@
+# YOLO detection dataset converted from Pascal VOC XML
+path: C:/Users/Jonathan Christopher/Documents/RPL/road-ai/datasets/road_damage
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: lubang
+  1: pengelupasan_lapisan_permukaan
+  2: retak_blok
+  3: retak_kulit_buaya
+  4: retak_memanjang
+  5: retak_pinggir
