@@ -5,7 +5,7 @@ import { supabase } from '../config/supabaseClient.js';
 const SALT_ROUNDS = 10;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export const registerUser = async ({ email, password, full_name, role, phone_number }) => {
+export const registerUser = async ({ email, password, full_name, phone_number }) => {
   // Hash password menggunakan bcrypt
   const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
@@ -17,7 +17,7 @@ export const registerUser = async ({ email, password, full_name, role, phone_num
         email,
         password_hash,
         full_name,
-        role: role || 'citizen',
+        role: 'citizen',
         phone_number: phone_number || null,
       },
     ])
