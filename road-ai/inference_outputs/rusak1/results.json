@@ -1,0 +1,135 @@
+{
+  "image": "rusak1.jpeg",
+  "image_path": "C:\\Users\\Jonathan Christopher\\Documents\\RPL\\RPL_Group03_UrusJakarta\\road-ai\\samples\\input\\rusak1.jpeg",
+  "dimensions": {
+    "width": 1200,
+    "height": 755
+  },
+  "detections": [
+    {
+      "detection_id": 0,
+      "class": "lubang",
+      "confidence": 0.6418,
+      "bounding_box": {
+        "x1": 505.3,
+        "y1": 632.2,
+        "x2": 658.0,
+        "y2": 725.4,
+        "width": 152.7,
+        "height": 93.2
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    },
+    {
+      "detection_id": 1,
+      "class": "lubang",
+      "confidence": 0.5588,
+      "bounding_box": {
+        "x1": 528.8,
+        "y1": 367.4,
+        "x2": 638.0,
+        "y2": 434.3,
+        "width": 109.1,
+        "height": 66.9
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    },
+    {
+      "detection_id": 2,
+      "class": "lubang",
+      "confidence": 0.3534,
+      "bounding_box": {
+        "x1": 548.2,
+        "y1": 308.1,
+        "x2": 633.5,
+        "y2": 353.1,
+        "width": 85.3,
+        "height": 45.0
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    },
+    {
+      "detection_id": 3,
+      "class": "pengelupasan_lapisan_permukaan",
+      "confidence": 0.2768,
+      "bounding_box": {
+        "x1": 574.0,
+        "y1": 135.0,
+        "x2": 620.4,
+        "y2": 169.6,
+        "width": 46.4,
+        "height": 34.5
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    },
+    {
+      "detection_id": 4,
+      "class": "lubang",
+      "confidence": 0.2272,
+      "bounding_box": {
+        "x1": 570.3,
+        "y1": 254.8,
+        "x2": 623.4,
+        "y2": 290.3,
+        "width": 53.1,
+        "height": 35.5
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    },
+    {
+      "detection_id": 5,
+      "class": "lubang",
+      "confidence": 0.1638,
+      "bounding_box": {
+        "x1": 489.3,
+        "y1": 580.6,
+        "x2": 661.4,
+        "y2": 727.8,
+        "width": 172.1,
+        "height": 147.2
+      },
+      "mask": {
+        "area_pixels": 0,
+        "relative_area_percent": 0.0,
+        "note": "Pixel area in original image coordinates. Not a physical measurement."
+      }
+    }
+  ],
+  "summary": {
+    "total_detections": 6,
+    "classes_detected": {
+      "lubang": {
+        "count": 5,
+        "max_confidence": 0.6418
+      },
+      "pengelupasan_lapisan_permukaan": {
+        "count": 1,
+        "max_confidence": 0.2768
+      }
+    }
+  },
+  "model": "C:\\Users\\Jonathan Christopher\\Documents\\RPL\\RPL_Group03_UrusJakarta\\road-ai\\models\\trained\\road_damage_v1_best.pt",
+  "confidence_threshold": 0.15,
+  "iou_threshold": 0.6,
+  "timestamp": "2026-10-15T19:16:10.872351"
+}

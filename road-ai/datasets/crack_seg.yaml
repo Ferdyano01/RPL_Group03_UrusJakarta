@@ -1,0 +1,19 @@
+# Crack Segmentation Dataset Configuration
+# Source: Ultralytics Crack-Seg (https://docs.ultralytics.com/datasets/segment/crack-seg/)
+# License: AGPL-3.0 (Ultralytics)
+# Images: 4,029 total (3,717 train / 200 val / 112 test)
+# Note: Contains road AND wall crack images - single "crack" class only.
+#       This is used as an initial pipeline experiment, not the final dataset.
+
+# Dataset root directory (relative to Ultralytics datasets dir, or absolute)
+path: crack-seg
+train: images/train     # 3717 images
+val: images/val         # 200 images
+test: images/test       # 112 images
+
+# Classes
+names:
+  0: crack
+
+# Auto-download URL
+download: https://github.com/ultralytics/assets/releases/download/v0.0.0/crack-seg.zip
