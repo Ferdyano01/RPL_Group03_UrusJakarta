@@ -1,0 +1,11 @@
+# Road surface segmentation dataset
+# Source annotations: datasets/raw/road_segmentation/annotations.xml
+# The CVAT XML polygons must be converted to YOLO segmentation labels first.
+
+path: datasets/road_segmentation
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: road
