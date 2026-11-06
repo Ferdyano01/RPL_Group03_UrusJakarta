@@ -57,3 +57,39 @@ export const login = async (req, res) => {
     });
   }
 };
+
+export const getMe = async (req, res) => {
+  try {
+    const user = await authService.getUserById(req.user.id);
+    return res.status(200).json({
+      status: 'success',
+      message: 'Profil pengguna berhasil diambil.',
+      data: user,
+    });
+  } catch (err) {
+    return res.status(404).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    const { full_name, phone_number } = req.body;
+    const updatedUser = await authService.updateUserProfile(req.user.id, {
+      full_name,
+      phone_number,
+    });
+    return res.status(200).json({
+      status: 'success',
+      message: 'Profil pengguna berhasil diperbarui.',
+      data: updatedUser,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};

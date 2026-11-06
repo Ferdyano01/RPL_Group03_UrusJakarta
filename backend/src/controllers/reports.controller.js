@@ -1,6 +1,37 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import * as reportsService from '../services/reports.service.js';
 import { analyzeReportSubmission } from '../services/ai.service.js';
 import { uploadImageToSupabase } from '../services/upload.service.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SAMPLES_DIR = path.resolve(__dirname, '../../../road-ai/samples/input');
+
+const resolveInputFile = (req) => {
+  if (req.file) {
+    return req.file;
+  }
+  const sampleName = req.body?.sample_image;
+  if (sampleName && typeof sampleName === 'string') {
+    const safeName = path.basename(sampleName);
+    const fullPath = path.join(SAMPLES_DIR, safeName);
+    if (fs.existsSync(fullPath)) {
+      const ext = path.extname(safeName).toLowerCase();
+      const mimetype =
+        ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      return {
+        buffer: fs.readFileSync(fullPath),
+        originalname: safeName,
+        mimetype,
+        isSample: true,
+        sampleUrl: `/samples/${safeName}`,
+      };
+    }
+  }
+  return null;
+};
 
 /**
  * POST /api/reports/analyze
@@ -10,11 +41,12 @@ import { uploadImageToSupabase } from '../services/upload.service.js';
 export const analyzeDraft = async (req, res) => {
   try {
     const { description, latitude, longitude, address, upload_image } = req.body;
+    const inputFile = resolveInputFile(req);
 
-    if (!req.file && !description) {
+    if (!inputFile && !description) {
       return res.status(400).json({
         status: 'error',
-        message: 'Harap lampirkan foto kerusakan jalan (field "image") atau deskripsi laporan.',
+        message: 'Harap lampirkan foto kerusakan jalan (field "image" atau "sample_image") atau deskripsi laporan.',
       });
     }
 
@@ -30,9 +62,9 @@ export const analyzeDraft = async (req, res) => {
 
     // Jalankan analisis AI (YOLO Vision + Generator Draf Naratif LLM/Template)
     const analysisResult = await analyzeReportSubmission({
-      fileBuffer: req.file?.buffer,
-      originalname: req.file?.originalname,
-      mimetype: req.file?.mimetype,
+      fileBuffer: inputFile?.buffer,
+      originalname: inputFile?.originalname,
+      mimetype: inputFile?.mimetype,
       userDescription: description || '',
       latitude: lat,
       longitude: lng,
@@ -40,12 +72,12 @@ export const analyzeDraft = async (req, res) => {
     });
 
     // Opsional: Unggah gambar ke Supabase Storage kecuali upload_image bernilai 'false'
-    let imageUrl = req.body.image_url || null;
+    let imageUrl = req.body.image_url || inputFile?.sampleUrl || null;
     let uploadWarning = null;
 
-    if (req.file && upload_image !== 'false') {
+    if (inputFile && !inputFile.isSample && upload_image !== 'false') {
       try {
-        imageUrl = await uploadImageToSupabase(req.file);
+        imageUrl = await uploadImageToSupabase(inputFile);
       } catch (uploadErr) {
         uploadWarning = uploadErr.message;
         console.warn('[Reports Controller] Peringatan unggah gambar saat analisis draf:', uploadErr.message);
@@ -125,18 +157,24 @@ export const create = async (req, res) => {
       }
     }
 
+    const inputFile = resolveInputFile(req);
+
     // Jika pengguna mengirim file gambar langsung ke POST /api/reports
-    if (req.file) {
+    if (inputFile) {
       if (!image_url) {
-        image_url = await uploadImageToSupabase(req.file);
+        if (inputFile.isSample) {
+          image_url = inputFile.sampleUrl;
+        } else {
+          image_url = await uploadImageToSupabase(inputFile);
+        }
       }
 
       // Jalankan analisis AI secara otomatis apabila belum ada hasil ai_analysis dari tahap draf
       if (!ai_analysis) {
         const autoAnalysis = await analyzeReportSubmission({
-          fileBuffer: req.file.buffer,
-          originalname: req.file.originalname,
-          mimetype: req.file.mimetype,
+          fileBuffer: inputFile.buffer,
+          originalname: inputFile.originalname,
+          mimetype: inputFile.mimetype,
           userDescription: description || '',
           latitude: lat,
           longitude: lng,

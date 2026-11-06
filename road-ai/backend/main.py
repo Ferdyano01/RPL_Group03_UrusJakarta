@@ -3,17 +3,49 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from ultralytics import YOLO
 
 
-MODEL_PATH = Path(
-    os.getenv("MODEL_PATH", "/app/models/trained/road_damage_v1_best.pt")
-)
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_LOCAL_MODEL = BASE_DIR / "models" / "trained" / "road_damage_v1_best.pt"
+DEFAULT_DOCKER_MODEL = Path("/app/models/trained/road_damage_v1_best.pt")
+
+
+def resolve_model_path() -> Path:
+    env_path = os.getenv("MODEL_PATH")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.is_file():
+            return candidate
+        rel_candidate = BASE_DIR / env_path
+        if rel_candidate.is_file():
+            return rel_candidate
+        return candidate
+    if DEFAULT_LOCAL_MODEL.is_file():
+        return DEFAULT_LOCAL_MODEL
+    return DEFAULT_DOCKER_MODEL
+
+
+MODEL_PATH = resolve_model_path()
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "application/octet-stream",
+}
 
 app = FastAPI(title="Road Damage AI API", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 model: YOLO | None = None
 
 

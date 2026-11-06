@@ -1,0 +1,583 @@
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  role: 'citizen' | 'officer' | 'admin';
+  phone_number?: string | null;
+  created_at?: string;
+}
+
+export interface BoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface YoloDetection {
+  detection_id: number;
+  class_id: number;
+  class: string;
+  confidence: number;
+  bounding_box: BoundingBox;
+}
+
+export interface AiAnalysisMetadata {
+  analyzed_at: string;
+  vision_service_available: boolean;
+  total_detections: number;
+  classes_detected: Record<string, { count: number; max_confidence: number }>;
+  detections: YoloDetection[];
+  image_dimensions: { width: number; height: number } | null;
+  max_confidence: number;
+  primary_damage_label: string;
+  needs_manual_review: boolean;
+  narrative_generator: string;
+  original_user_description?: string | null;
+}
+
+export interface ReportItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  severity: 'low' | 'medium' | 'high';
+  latitude: number;
+  longitude: number;
+  address: string | null;
+  image_url: string | null;
+  ai_analysis: AiAnalysisMetadata | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  reporter?: {
+    id: string;
+    full_name: string;
+    email: string;
+    phone_number?: string | null;
+    role: string;
+  } | null;
+  status_history?: {
+    id: string;
+    previous_status: string | null;
+    new_status: string;
+    notes: string | null;
+    changed_by: string | null;
+    created_at: string;
+  }[];
+  report_routings?: {
+    id: string;
+    routed_at: string;
+    notes: string | null;
+    authority?: {
+      id: string;
+      name: string;
+      region: string;
+      contact_email: string;
+    } | null;
+  }[];
+}
+
+export interface SampleImageItem {
+  id: string;
+  filename: string;
+  label: string;
+  image_url: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  description: string;
+}
+
+export interface DraftAnalysisResponse {
+  draft: {
+    title: string;
+    description: string;
+    category: string;
+    severity: 'low' | 'medium' | 'high';
+    latitude: number;
+    longitude: number;
+    address: string | null;
+    image_url: string | null;
+    suggested_status: string;
+    needs_manual_review: boolean;
+  };
+  ai_analysis: AiAnalysisMetadata;
+  upload_warning?: string;
+}
+
+const STORAGE_KEYS = {
+  TOKEN: 'urusjakarta_token',
+  USER: 'urusjakarta_user',
+  API_URL: 'urusjakarta_api_url',
+};
+
+let memoryToken: string | null = null;
+let memoryUser: UserProfile | null = null;
+let memoryApiUrl: string | null = null;
+
+const getStorageItem = (key: string): string | null => {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+  } catch {
+    // Abaikan jika localStorage tidak tersedia
+  }
+  return null;
+};
+
+const setStorageItem = (key: string, value: string | null) => {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      if (value === null) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, value);
+      }
+    }
+  } catch {
+    // Abaikan
+  }
+};
+
+const detectDefaultApiUrl = (): string => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const hostname = window.location.hostname || 'localhost';
+    return `http://${hostname}:5000`;
+  }
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const host = hostUri.split(':')[0];
+    if (host) {
+      return `http://${host}:5000`;
+    }
+  }
+  return 'http://localhost:5000';
+};
+
+export const getApiBaseUrl = (): string => {
+  if (memoryApiUrl) return memoryApiUrl;
+  const saved = getStorageItem(STORAGE_KEYS.API_URL);
+  if (saved) {
+    memoryApiUrl = saved;
+    return saved;
+  }
+  return detectDefaultApiUrl();
+};
+
+export const setApiBaseUrl = (url: string) => {
+  const cleaned = url.trim().replace(/\/+$/, '');
+  memoryApiUrl = cleaned;
+  setStorageItem(STORAGE_KEYS.API_URL, cleaned);
+};
+
+export const getAuthToken = (): string | null => {
+  if (memoryToken) return memoryToken;
+  const saved = getStorageItem(STORAGE_KEYS.TOKEN);
+  if (saved) {
+    memoryToken = saved;
+  }
+  return memoryToken;
+};
+
+export const getCurrentUser = (): UserProfile | null => {
+  if (memoryUser) return memoryUser;
+  const saved = getStorageItem(STORAGE_KEYS.USER);
+  if (saved) {
+    try {
+      memoryUser = JSON.parse(saved) as UserProfile;
+    } catch {
+      memoryUser = null;
+    }
+  }
+  return memoryUser;
+};
+
+export const setAuthSession = (token: string, user: UserProfile) => {
+  memoryToken = token;
+  memoryUser = user;
+  setStorageItem(STORAGE_KEYS.TOKEN, token);
+  setStorageItem(STORAGE_KEYS.USER, JSON.stringify(user));
+};
+
+export const updateStoredUser = (user: UserProfile) => {
+  memoryUser = user;
+  setStorageItem(STORAGE_KEYS.USER, JSON.stringify(user));
+};
+
+export const clearAuthSession = () => {
+  memoryToken = null;
+  memoryUser = null;
+  setStorageItem(STORAGE_KEYS.TOKEN, null);
+  setStorageItem(STORAGE_KEYS.USER, null);
+};
+
+export const resolveImageUrl = (imageUrl?: string | null): string | null => {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')) {
+    return imageUrl;
+  }
+  const baseUrl = getApiBaseUrl();
+  if (imageUrl.startsWith('/')) {
+    return `${baseUrl}${imageUrl}`;
+  }
+  if (imageUrl.includes('localhost:5000')) {
+    return imageUrl.replace('http://localhost:5000', baseUrl);
+  }
+  return imageUrl;
+};
+
+const apiRequest = async <T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> => {
+  const baseUrl = getApiBaseUrl();
+  const token = getAuthToken();
+
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string> | undefined),
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    ...options,
+    headers,
+  });
+
+  const json = await response.json().catch(() => ({
+    status: 'error',
+    message: `Respons server tidak valid (HTTP ${response.status})`,
+  }));
+
+  if (!response.ok || json.status === 'error') {
+    throw new Error(json.message || `Permintaan gagal (${response.status})`);
+  }
+
+  return json as T;
+};
+
+export const checkSystemHealth = async () => {
+  try {
+    const res = await apiRequest<{
+      status: string;
+      message: string;
+      storage_mode?: string;
+      ai_service?: { available: boolean; model_loaded: boolean; url: string };
+    }>('/api/health');
+    return {
+      backendOnline: true,
+      storageMode: res.storage_mode || 'supabase',
+      aiOnline: Boolean(res.ai_service?.available),
+      modelLoaded: Boolean(res.ai_service?.model_loaded),
+    };
+  } catch {
+    return {
+      backendOnline: false,
+      storageMode: 'offline',
+      aiOnline: false,
+      modelLoaded: false,
+    };
+  }
+};
+
+export const getSampleImages = async (): Promise<SampleImageItem[]> => {
+  const res = await apiRequest<{ status: string; data: SampleImageItem[] }>('/api/samples');
+  return res.data || [];
+};
+
+export const registerUserApi = async (payload: {
+  full_name: string;
+  email: string;
+  password: string;
+  phone_number?: string;
+}) => {
+  return apiRequest<{ status: string; message: string; data: UserProfile }>(
+    '/api/auth/register',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+};
+
+export const loginUserApi = async (payload: { email: string; password: string }) => {
+  const res = await apiRequest<{
+    status: string;
+    message: string;
+    data: { token: string; user: UserProfile };
+  }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  setAuthSession(res.data.token, res.data.user);
+  return res.data;
+};
+
+export const loginOrRegisterDemoUser = async () => {
+  const demoCredentials = {
+    email: 'warga@jakarta.id',
+    password: 'Password123!',
+    full_name: 'Budi Warga Jakarta',
+    phone_number: '081234567890',
+  };
+  try {
+    return await loginUserApi({
+      email: demoCredentials.email,
+      password: demoCredentials.password,
+    });
+  } catch {
+    await registerUserApi(demoCredentials);
+    return await loginUserApi({
+      email: demoCredentials.email,
+      password: demoCredentials.password,
+    });
+  }
+};
+
+export const fetchMyProfile = async (): Promise<UserProfile> => {
+  const res = await apiRequest<{ status: string; data: UserProfile }>('/api/auth/me');
+  updateStoredUser(res.data);
+  return res.data;
+};
+
+export const updateMyProfile = async (payload: {
+  full_name: string;
+  phone_number?: string;
+}): Promise<UserProfile> => {
+  const res = await apiRequest<{ status: string; data: UserProfile }>('/api/auth/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  updateStoredUser(res.data);
+  return res.data;
+};
+
+export const analyzeReportDraftApi = async (params: {
+  webFile?: File | null;
+  sampleImage?: string | null;
+  latitude: number | string;
+  longitude: number | string;
+  address?: string;
+  description?: string;
+  uploadImage?: boolean;
+}): Promise<DraftAnalysisResponse> => {
+  const formData = new FormData();
+  if (params.webFile) {
+    formData.append('image', params.webFile, params.webFile.name);
+  } else if (params.sampleImage) {
+    formData.append('sample_image', params.sampleImage);
+  }
+  formData.append('latitude', String(params.latitude));
+  formData.append('longitude', String(params.longitude));
+  if (params.address) formData.append('address', params.address);
+  if (params.description) formData.append('description', params.description);
+  formData.append('upload_image', params.uploadImage === false ? 'false' : 'true');
+
+  const res = await apiRequest<{
+    status: string;
+    message: string;
+    data: DraftAnalysisResponse;
+  }>('/api/reports/analyze', {
+    method: 'POST',
+    body: formData,
+  });
+
+  return res.data;
+};
+
+export const createReportApi = async (params: {
+  title?: string;
+  description?: string;
+  category?: string;
+  severity?: string;
+  latitude: number | string;
+  longitude: number | string;
+  address?: string;
+  image_url?: string | null;
+  ai_analysis?: AiAnalysisMetadata | null;
+  status?: string;
+  webFile?: File | null;
+  sampleImage?: string | null;
+}): Promise<ReportItem> => {
+  if (params.webFile) {
+    const formData = new FormData();
+    formData.append('image', params.webFile, params.webFile.name);
+    formData.append('latitude', String(params.latitude));
+    formData.append('longitude', String(params.longitude));
+    if (params.title) formData.append('title', params.title);
+    if (params.description) formData.append('description', params.description);
+    if (params.category) formData.append('category', params.category);
+    if (params.severity) formData.append('severity', params.severity);
+    if (params.address) formData.append('address', params.address);
+    if (params.image_url) formData.append('image_url', params.image_url);
+    if (params.status) formData.append('status', params.status);
+    if (params.ai_analysis) {
+      formData.append('ai_analysis', JSON.stringify(params.ai_analysis));
+    }
+
+    const res = await apiRequest<{ status: string; data: ReportItem }>('/api/reports', {
+      method: 'POST',
+      body: formData,
+    });
+    return res.data;
+  }
+
+  const res = await apiRequest<{ status: string; data: ReportItem }>('/api/reports', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: params.title,
+      description: params.description,
+      category: params.category,
+      severity: params.severity,
+      latitude: Number(params.latitude),
+      longitude: Number(params.longitude),
+      address: params.address,
+      image_url: params.image_url,
+      ai_analysis: params.ai_analysis,
+      status: params.status,
+      ...(params.sampleImage ? { sample_image: params.sampleImage } : {}),
+    }),
+  });
+  return res.data;
+};
+
+export const fetchAllReportsApi = async (params?: {
+  status?: string;
+  category?: string;
+  severity?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}) => {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set('status', params.status);
+  if (params?.category) qs.set('category', params.category);
+  if (params?.severity) qs.set('severity', params.severity);
+  if (params?.search) qs.set('search', params.search);
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+
+  const queryString = qs.toString() ? `?${qs.toString()}` : '';
+  return apiRequest<{
+    status: string;
+    data: ReportItem[];
+    pagination: { total: number; page: number; limit: number; total_pages: number };
+  }>(`/api/reports${queryString}`);
+};
+
+export const fetchMyReportsApi = async (params?: {
+  status?: string;
+  page?: number;
+  limit?: number;
+}) => {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set('status', params.status);
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+
+  const queryString = qs.toString() ? `?${qs.toString()}` : '';
+  return apiRequest<{
+    status: string;
+    data: ReportItem[];
+    pagination: { total: number; page: number; limit: number; total_pages: number };
+  }>(`/api/reports/my-reports${queryString}`);
+};
+
+export const fetchReportDetailApi = async (id: string): Promise<ReportItem> => {
+  const res = await apiRequest<{ status: string; data: ReportItem }>(`/api/reports/${id}`);
+  return res.data;
+};
+
+export const updateReportApi = async (
+  id: string,
+  payload: Partial<{
+    title: string;
+    description: string;
+    category: string;
+    severity: string;
+    address: string;
+    status: string;
+    status_notes: string;
+  }>
+): Promise<ReportItem> => {
+  const res = await apiRequest<{ status: string; data: ReportItem }>(`/api/reports/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+};
+
+export const deleteReportApi = async (id: string) => {
+  return apiRequest<{ status: string; message: string }>(`/api/reports/${id}`, {
+    method: 'DELETE',
+  });
+};
+
+export const formatStatusBadge = (status: string) => {
+  const s = (status || 'submitted').toLowerCase();
+  if (['routed', 'in_progress'].includes(s)) {
+    return { label: 'PROSES', rawLabel: s.toUpperCase(), bg: '#FFD700', text: '#000' };
+  }
+  if (['fixed', 'closed'].includes(s)) {
+    return { label: 'SELESAI', rawLabel: s.toUpperCase(), bg: '#32CD32', text: '#000' };
+  }
+  if (s === 'rejected') {
+    return { label: 'DITOLAK', rawLabel: 'REJECTED', bg: '#FF4D4D', text: '#fff' };
+  }
+  if (s === 'pending_review') {
+    return { label: 'MENUNGGU REVIEW', rawLabel: 'PENDING REVIEW', bg: '#FCA5A5', text: '#000' };
+  }
+  return { label: 'MENUNGGU', rawLabel: s.toUpperCase(), bg: '#FFFFFF', text: '#000' };
+};
+
+export const formatSeverityBadge = (severity?: string) => {
+  const sev = (severity || 'medium').toLowerCase();
+  if (sev === 'high') {
+    return { label: 'PARAH (HIGH)', bg: '#FF5E00', text: '#fff' };
+  }
+  if (sev === 'low') {
+    return { label: 'RINGAN (LOW)', bg: '#C1FF72', text: '#000' };
+  }
+  return { label: 'SEDANG (MEDIUM)', bg: '#FFD700', text: '#000' };
+};
+
+export const formatCategoryLabel = (category?: string) => {
+  const map: Record<string, string> = {
+    pothole: 'Lubang Jalan (Pothole)',
+    crack: 'Retak Jalan (Crack)',
+    surface_damage: 'Pengelupasan Aspal',
+    sidewalk_damage: 'Kerusakan Trotoar',
+    undamaged: 'Kondisi Jalan Normal',
+  };
+  return map[(category || '').toLowerCase()] || category || 'Kerusakan Jalan';
+};
+
+export const formatDateID = (isoString?: string) => {
+  if (!isoString) return '-';
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return isoString;
+  }
+};
+

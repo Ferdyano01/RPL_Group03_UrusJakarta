@@ -1,4 +1,11 @@
+import crypto from 'crypto';
 import { supabaseAdmin } from '../config/supabaseClient.js';
+import {
+  readLocalDb,
+  writeLocalDb,
+  shouldFallbackToLocal,
+  setStorageMode,
+} from '../config/localStore.js';
 
 // Pemetaan tab filter status dari Frontend (riwayat.tsx) ke enum report_status di PostgreSQL
 const STATUS_GROUP_MAP = {
@@ -6,6 +13,28 @@ const STATUS_GROUP_MAP = {
   PROSES: ['routed', 'in_progress'],
   SELESAI: ['fixed', 'closed'],
   DITOLAK: ['rejected'],
+};
+
+const filterLocalReports = (reports, { status, category, severity, search, userId } = {}) => {
+  return reports.filter((r) => {
+    if (userId && r.user_id !== userId) return false;
+    if (status && status.toUpperCase() !== 'SEMUA') {
+      const upperStatus = status.toUpperCase();
+      if (STATUS_GROUP_MAP[upperStatus]) {
+        if (!STATUS_GROUP_MAP[upperStatus].includes(r.status)) return false;
+      } else if (r.status !== status.toLowerCase()) {
+        return false;
+      }
+    }
+    if (category && (r.category || '').toLowerCase() !== category.toLowerCase()) return false;
+    if (severity && (r.severity || '').toLowerCase() !== severity.toLowerCase()) return false;
+    if (search && search.trim() !== '') {
+      const kw = search.trim().toLowerCase();
+      const hay = `${r.title || ''} ${r.description || ''} ${r.address || ''}`.toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
 };
 
 /**
@@ -45,8 +74,43 @@ export const createReport = async ({
     .single();
 
   if (error) {
+    if (shouldFallbackToLocal(error)) {
+      setStorageMode('local_fallback');
+      const db = readLocalDb();
+      const now = new Date().toISOString();
+      const newReport = {
+        id: crypto.randomUUID(),
+        user_id,
+        title: title || 'Laporan Kerusakan Jalan',
+        description: description || null,
+        category: category || 'pothole',
+        severity: severity || 'medium',
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        address: address || null,
+        image_url: image_url || null,
+        ai_analysis: ai_analysis || null,
+        status: status || 'submitted',
+        created_at: now,
+        updated_at: now,
+      };
+      db.reports.unshift(newReport);
+      db.status_history.push({
+        id: crypto.randomUUID(),
+        report_id: newReport.id,
+        changed_by: user_id,
+        previous_status: null,
+        new_status: newReport.status,
+        notes: 'Laporan baru dikirim oleh warga dan diproses oleh sistem.',
+        created_at: now,
+      });
+      writeLocalDb(db);
+      return newReport;
+    }
     throw new Error(`Gagal menyimpan laporan: ${error.message}`);
   }
+
+  setStorageMode('supabase');
 
   // Catat status awal ke tabel status_history (non-blocking terhadap hasil utama jika terjadi kendala)
   const { error: historyError } = await supabaseAdmin.from('status_history').insert([
@@ -124,9 +188,37 @@ export const getAllReports = async ({
   const { data, error, count } = await query;
 
   if (error) {
+    if (shouldFallbackToLocal(error)) {
+      setStorageMode('local_fallback');
+      const db = readLocalDb();
+      const sorted = [...db.reports].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      const filtered = filterLocalReports(sorted, { status, category, severity, search });
+      const total = filtered.length;
+      const paged = filtered.slice(from, to + 1).map((r) => {
+        const u = db.users.find((usr) => usr.id === r.user_id);
+        return {
+          ...r,
+          reporter: u
+            ? { id: u.id, full_name: u.full_name, email: u.email, role: u.role }
+            : null,
+        };
+      });
+      return {
+        reports: paged,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: total ? Math.ceil(total / limitNum) : 0,
+        },
+      };
+    }
     throw new Error(`Gagal mengambil daftar laporan: ${error.message}`);
   }
 
+  setStorageMode('supabase');
   return {
     reports: data || [],
     pagination: {
@@ -166,9 +258,29 @@ export const getReportsByUser = async (userId, { status, page = 1, limit = 20 } 
   const { data, error, count } = await query;
 
   if (error) {
+    if (shouldFallbackToLocal(error)) {
+      setStorageMode('local_fallback');
+      const db = readLocalDb();
+      const sorted = [...db.reports].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      const filtered = filterLocalReports(sorted, { status, userId });
+      const total = filtered.length;
+      const paged = filtered.slice(from, to + 1);
+      return {
+        reports: paged,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: total ? Math.ceil(total / limitNum) : 0,
+        },
+      };
+    }
     throw new Error(`Gagal mengambil riwayat laporan pengguna: ${error.message}`);
   }
 
+  setStorageMode('supabase');
   return {
     reports: data || [],
     pagination: {
@@ -220,39 +332,82 @@ export const getReportById = async (reportId) => {
     .eq('id', reportId)
     .single();
 
+  if (error && shouldFallbackToLocal(error)) {
+    setStorageMode('local_fallback');
+    const db = readLocalDb();
+    const report = db.reports.find((r) => r.id === reportId);
+    if (!report) {
+      throw new Error('Laporan tidak ditemukan.');
+    }
+    const u = db.users.find((usr) => usr.id === report.user_id);
+    const history = (db.status_history || []).filter((h) => h.report_id === reportId);
+    const routings = (db.report_routings || [])
+      .filter((rt) => rt.report_id === reportId)
+      .map((rt) => ({
+        ...rt,
+        authority: (db.authorities || []).find((a) => a.id === rt.authority_id) || null,
+      }));
+    return {
+      ...report,
+      reporter: u
+        ? {
+            id: u.id,
+            full_name: u.full_name,
+            email: u.email,
+            phone_number: u.phone_number,
+            role: u.role,
+          }
+        : null,
+      status_history: history,
+      report_routings: routings,
+    };
+  }
+
   if (error || !data) {
     throw new Error('Laporan tidak ditemukan.');
   }
 
+  setStorageMode('supabase');
   return data;
 };
 
 /**
- * Memperbarui informasi laporan (hanya diizinkan bagi pemilik laporan saat status draft/submitted atau oleh admin)
+ * Memperbarui informasi laporan
  */
 export const updateReport = async (reportId, userId, userRole, updatePayload) => {
   const existing = await getReportById(reportId);
 
   const isOwner = existing.user_id === userId;
-  const isAdmin = userRole === 'admin';
+  const isAdmin = userRole === 'admin' || userRole === 'officer';
 
   if (!isOwner && !isAdmin) {
     throw new Error('Anda tidak memiliki akses untuk mengubah laporan ini.');
   }
 
-  if (isOwner && !isAdmin && !['draft', 'submitted', 'pending_review'].includes(existing.status)) {
-    throw new Error('Laporan yang sedang diproses atau sudah diverifikasi tidak dapat diubah lagi oleh pelapor.');
-  }
-
-  const allowedFields = ['title', 'description', 'category', 'severity', 'latitude', 'longitude', 'address', 'image_url'];
+  const allowedFields = [
+    'title',
+    'description',
+    'category',
+    'severity',
+    'latitude',
+    'longitude',
+    'address',
+    'image_url',
+    'status',
+  ];
   const updates = { updated_at: new Date().toISOString() };
 
   for (const key of allowedFields) {
     if (updatePayload[key] !== undefined) {
       updates[key] =
-        key === 'latitude' || key === 'longitude' ? Number(updatePayload[key]) : updatePayload[key];
+        key === 'latitude' || key === 'longitude'
+          ? Number(updatePayload[key])
+          : updatePayload[key];
     }
   }
+
+  const statusChanged =
+    updates.status !== undefined && updates.status !== existing.status;
 
   const { data, error } = await supabaseAdmin
     .from('reports')
@@ -261,10 +416,50 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
     .select('*')
     .single();
 
+  if (error && shouldFallbackToLocal(error)) {
+    setStorageMode('local_fallback');
+    const db = readLocalDb();
+    const idx = db.reports.findIndex((r) => r.id === reportId);
+    if (idx === -1) {
+      throw new Error('Laporan tidak ditemukan.');
+    }
+    const prevStatus = db.reports[idx].status;
+    db.reports[idx] = {
+      ...db.reports[idx],
+      ...updates,
+    };
+    if (statusChanged) {
+      db.status_history.push({
+        id: crypto.randomUUID(),
+        report_id: reportId,
+        changed_by: userId,
+        previous_status: prevStatus,
+        new_status: updates.status,
+        notes: updatePayload.status_notes || `Status laporan diperbarui menjadi ${updates.status}.`,
+        created_at: updates.updated_at,
+      });
+    }
+    writeLocalDb(db);
+    return db.reports[idx];
+  }
+
   if (error) {
     throw new Error(`Gagal memperbarui laporan: ${error.message}`);
   }
 
+  if (statusChanged) {
+    await supabaseAdmin.from('status_history').insert([
+      {
+        report_id: reportId,
+        changed_by: userId,
+        previous_status: existing.status,
+        new_status: updates.status,
+        notes: updatePayload.status_notes || `Status laporan diperbarui menjadi ${updates.status}.`,
+      },
+    ]);
+  }
+
+  setStorageMode('supabase');
   return data;
 };
 
@@ -281,16 +476,24 @@ export const deleteReport = async (reportId, userId, userRole) => {
     throw new Error('Anda tidak memiliki akses untuk menghapus laporan ini.');
   }
 
-  if (isOwner && !isAdmin && !['draft', 'submitted', 'rejected'].includes(existing.status)) {
-    throw new Error('Laporan yang sedang ditangani tidak dapat dihapus.');
-  }
-
   const { error } = await supabaseAdmin.from('reports').delete().eq('id', reportId);
+
+  if (error && shouldFallbackToLocal(error)) {
+    setStorageMode('local_fallback');
+    const db = readLocalDb();
+    db.reports = db.reports.filter((r) => r.id !== reportId);
+    db.status_history = (db.status_history || []).filter((h) => h.report_id !== reportId);
+    db.report_routings = (db.report_routings || []).filter((rt) => rt.report_id !== reportId);
+    writeLocalDb(db);
+    return { id: reportId };
+  }
 
   if (error) {
     throw new Error(`Gagal menghapus laporan: ${error.message}`);
   }
 
+  setStorageMode('supabase');
   return { id: reportId };
 };
+
 

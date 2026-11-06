@@ -1,6 +1,21 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 
+const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
+
+const ROAD_AI_DIR = path.resolve(__dirname, '../../../road-ai');
+const LOCAL_VENV_PYTHON = path.join(ROAD_AI_DIR, '.venv', 'bin', 'python');
+const LOCAL_YOLO_MODEL = path.join(ROAD_AI_DIR, 'models', 'trained', 'road_damage_v1_best.pt');
 
 const ROAD_AI_URL = process.env.ROAD_AI_URL || 'http://localhost:8000';
 const LLM_API_URL = process.env.LLM_API_URL || '';
@@ -24,6 +39,81 @@ const YOLO_CLASS_LABELS_ID = {
   retak_kulit_buaya: 'Retak Kulit Buaya (Alligator Cracking)',
   retak_memanjang: 'Retak Memanjang',
   retak_pinggir: 'Retak Pinggir Jalan',
+};
+
+/**
+ * Fallback inferensi YOLO langsung menggunakan Python .venv lokal jika server FastAPI belum dinyalakan
+ */
+const runLocalPythonYoloFallback = async (fileBuffer, originalname = 'image.jpg') => {
+  if (!fs.existsSync(LOCAL_VENV_PYTHON) || !fs.existsSync(LOCAL_YOLO_MODEL)) {
+    return null;
+  }
+
+  const ext = path.extname(originalname) || '.jpg';
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `urusjakarta-yolo-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
+  );
+
+  try {
+    fs.writeFileSync(tmpFile, fileBuffer);
+    const pyScript = `
+import json, sys
+from PIL import Image
+from ultralytics import YOLO
+
+model_path, img_path, orig_name = sys.argv[1], sys.argv[2], sys.argv[3]
+image = Image.open(img_path).convert("RGB")
+model = YOLO(model_path)
+result = model.predict(source=image, conf=0.15, iou=0.6, device="cpu", verbose=False)[0]
+detections = []
+if result.boxes is not None:
+    for idx in range(len(result.boxes)):
+        box = result.boxes.xyxy[idx].tolist()
+        cls_id = int(result.boxes.cls[idx])
+        detections.append({
+            "detection_id": idx,
+            "class_id": cls_id,
+            "class": model.names[cls_id],
+            "confidence": round(float(result.boxes.conf[idx]), 4),
+            "bounding_box": {
+                "x1": round(box[0], 1),
+                "y1": round(box[1], 1),
+                "x2": round(box[2], 1),
+                "y2": round(box[3], 1),
+            },
+        })
+class_counts = {}
+for det in detections:
+    cname = det["class"]
+    cur = class_counts.setdefault(cname, {"count": 0, "max_confidence": 0.0})
+    cur["count"] += 1
+    cur["max_confidence"] = max(cur["max_confidence"], det["confidence"])
+out = {
+    "image": orig_name,
+    "dimensions": {"width": image.width, "height": image.height},
+    "detections": detections,
+    "summary": {"total_detections": len(detections), "classes_detected": class_counts},
+}
+print("__YOLO_JSON_START__" + json.dumps(out) + "__YOLO_JSON_END__")
+`;
+    const { stdout } = await execFileAsync(
+      LOCAL_VENV_PYTHON,
+      ['-c', pyScript, LOCAL_YOLO_MODEL, tmpFile, originalname],
+      { timeout: 25000 }
+    );
+    const match = stdout.match(/__YOLO_JSON_START__([\s\S]*?)__YOLO_JSON_END__/);
+    if (match) {
+      return JSON.parse(match[1]);
+    }
+    return null;
+  } finally {
+    try {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    } catch {
+      // Abaikan
+    }
+  }
 };
 
 /**
@@ -52,7 +142,19 @@ export const detectRoadDamageWithYOLO = async (fileBuffer, originalname = 'image
       ...result,
     };
   } catch (error) {
-    console.warn(`[AI Service] Gagal menghubungi Road-AI di ${ROAD_AI_URL}/predict:`, error.message);
+    console.warn(`[AI Service] Gagal menghubungi Road-AI di ${ROAD_AI_URL}/predict (${error.message}), mencoba fallback Python YOLO lokal...`);
+    try {
+      const localResult = await runLocalPythonYoloFallback(fileBuffer, originalname);
+      if (localResult) {
+        return {
+          available: true,
+          ...localResult,
+        };
+      }
+    } catch (localErr) {
+      console.warn('[AI Service] Fallback Python YOLO lokal gagal:', localErr.message);
+    }
+
     return {
       available: false,
       error: error.message,
@@ -78,6 +180,38 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
   // Jika tidak ada deteksi dari YOLO (atau service AI sedang offline), analisis dari teks deskripsi pengguna
   if (totalDetections === 0) {
     const lowerDesc = (userDescription || '').toLowerCase();
+    const hasDamageKeyword =
+      lowerDesc.includes('lubang') ||
+      lowerDesc.includes('berlubang') ||
+      lowerDesc.includes('retak') ||
+      lowerDesc.includes('trotoar') ||
+      lowerDesc.includes('kelupas') ||
+      lowerDesc.includes('rusak') ||
+      lowerDesc.includes('amblas') ||
+      lowerDesc.includes('pecah') ||
+      lowerDesc.includes('hancur') ||
+      lowerDesc.includes('bergelombang');
+
+    const hasNormalKeyword =
+      lowerDesc.includes('mulus') ||
+      lowerDesc.includes('normal') ||
+      lowerDesc.includes('rapi') ||
+      lowerDesc.includes('baik') ||
+      lowerDesc.includes('tidak rusak') ||
+      lowerDesc.includes('tidak ada kerusakan');
+
+    // Jika YOLO berhasil menganalisis gambar tetapi 0 deteksi dan tidak ada indikasi kerusakan di teks
+    if (visionResult?.available && (!hasDamageKeyword || hasNormalKeyword)) {
+      return {
+        category: 'undamaged',
+        primary_damage_label: 'Kondisi Jalan Normal (Tidak Terdeteksi Kerusakan)',
+        severity: 'low',
+        max_confidence: 0,
+        needs_manual_review: true,
+        suggested_status: 'pending_review',
+      };
+    }
+
     let fallbackCategory = 'pothole';
     let fallbackSeverity = 'medium';
 
@@ -244,6 +378,23 @@ Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
 
   // Fallback: Generator Naratif Terstruktur Otomatis
   const locationShort = address ? address.split(',')[0].trim() : `Titik (${ Number(latitude).toFixed(4)}, ${Number(longitude).toFixed(4)})`;
+
+  if (metrics.category === 'undamaged') {
+    const title = `Evaluasi Kondisi Jalan Normal - ${locationShort}`;
+    const descParts = [
+      `Berdasarkan analisis citra visual AI (YOLO), tidak terdeteksi adanya kerusakan permukaan jalan (0 deteksi) pada lokasi ${locationText}.`,
+      `Laporan ini diklasifikasikan sebagai kondisi normal (${metrics.severity}) dan diarahkan ke antrean tinjauan manual moderator.`,
+    ];
+    if (userDescription && userDescription.trim().length > 0) {
+      descParts.push(`Keterangan pelapor: "${userDescription.trim()}".`);
+    }
+    return {
+      title,
+      description: descParts.join(' '),
+      generator: 'template_orchestrator',
+    };
+  }
+
   const title = `Laporan ${metrics.primary_damage_label} - ${locationShort}`;
 
   let descriptionParts = [];
@@ -269,6 +420,38 @@ Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
     title,
     description: descriptionParts.join(' '),
     generator: 'template_orchestrator',
+  };
+};
+
+/**
+ * Mengecek status ketersediaan service FastAPI Road-AI
+ */
+export const checkRoadAiHealth = async () => {
+  try {
+    const response = await fetch(`${ROAD_AI_URL}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        available: data.status === 'ok',
+        model_loaded: Boolean(data.model_loaded),
+        mode: 'fastapi_service',
+        url: ROAD_AI_URL,
+      };
+    }
+  } catch {
+    // Cek ketersediaan model lokal
+  }
+
+  const hasLocalYolo =
+    fs.existsSync(LOCAL_VENV_PYTHON) && fs.existsSync(LOCAL_YOLO_MODEL);
+  return {
+    available: hasLocalYolo,
+    model_loaded: hasLocalYolo,
+    mode: hasLocalYolo ? 'local_python_yolo' : 'offline',
+    url: ROAD_AI_URL,
   };
 };
 

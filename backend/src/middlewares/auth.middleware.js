@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
+import '../config/supabaseClient.js';
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const getJwtSecret = () =>
+  (process.env.JWT_SECRET || 'urusjakarta_fallback_secret_2026').trim();
 
 export const requireAuth = (req, res, next) => {
   try {
@@ -12,7 +14,7 @@ export const requireAuth = (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     // Verifikasi token JWT
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     
     // Melampirkan data payload user ke objek req
     req.user = decoded; // Berisi { id, email, role, full_name }
