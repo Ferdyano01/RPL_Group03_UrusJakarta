@@ -6,4 +6,29 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
+  --uj-canvas: #F4F1EA;
+  --uj-surface: #FFFFFF;
+  --uj-ink: #111827;
+  --uj-accent: #FF5E00;
+  --uj-yellow: #FDE047;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  background-color: var(--uj-canvas);
+  color: var(--uj-ink);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--uj-yellow);
+  color: var(--uj-ink);
 }

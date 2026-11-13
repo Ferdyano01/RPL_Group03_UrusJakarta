@@ -1,25 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Image,
-  TextInput,
   ActivityIndicator,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+
+import { YoloDetectionViewer } from '@/components/yolo-detection-viewer';
+import { BrutalShadow, Palette } from '@/constants/theme';
 import {
   ReportItem,
-  fetchReportDetailApi,
-  updateReportApi,
   deleteReportApi,
-  resolveImageUrl,
-  formatStatusBadge,
-  formatSeverityBadge,
+  fetchReportDetailApi,
   formatCategoryLabel,
   formatDateID,
+  formatSeverityBadge,
+  formatStatusBadge,
+  resolveImageUrl,
+  updateReportApi,
 } from '@/services/api';
 
 interface ReportDetailModalProps {
@@ -47,10 +49,6 @@ export function ReportDetailModal({
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [boxAreaSize, setBoxAreaSize] = useState<{ width: number; height: number }>({
-    width: 0,
-    height: 0,
-  });
 
   useEffect(() => {
     if (initialReport) {
@@ -100,7 +98,7 @@ export function ReportDetailModal({
       });
       setReport({ ...report, ...updated });
       setIsEditing(false);
-      setSuccessMsg('Laporan berhasil diperbarui!');
+      setSuccessMsg('Perubahan laporan telah disimpan.');
       onUpdated();
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal memperbarui laporan.');
@@ -116,11 +114,11 @@ export function ReportDetailModal({
     try {
       await updateReportApi(report.id, {
         status: newStatus,
-        status_notes: `Status diubah menjadi ${label} melalui panel pengujian lokal.`,
+        status_notes: `Status laporan diperbarui menjadi ${label}.`,
       });
       const refreshed = await fetchReportDetailApi(report.id);
       setReport(refreshed);
-      setSuccessMsg(`Status laporan diubah menjadi ${label}!`);
+      setSuccessMsg(`Status laporan diperbarui menjadi ${label}.`);
       onUpdated();
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal mengubah status laporan.');
@@ -146,91 +144,71 @@ export function ReportDetailModal({
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.modalCard}>
-          {/* Header Modal */}
+          {/* Header */}
           <View style={styles.headerRow}>
-            <Text style={styles.headerTitle}>DETAIL LAPORAN</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeBtnText}>✕ TUTUP</Text>
+            <View style={styles.headerLeft}>
+              <View style={styles.headerTag}>
+                <Text style={styles.headerTagText}>LAPORAN</Text>
+              </View>
+              <Text style={styles.headerTitle}>Detail Penanganan</Text>
+            </View>
+            <TouchableOpacity activeOpacity={0.85} style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnText}>Tutup</Text>
             </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.bodyScroll} showsVerticalScrollIndicator={false}>
             {loading && (
               <View style={styles.loadingRow}>
-                <ActivityIndicator size="small" color="#000" />
+                <ActivityIndicator size="small" color={Palette.ink} />
                 <Text style={styles.loadingText}>Memuat rincian lengkap...</Text>
               </View>
             )}
 
             {errorMsg && (
               <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
+                <Text style={styles.bannerText}>{errorMsg}</Text>
               </View>
             )}
 
             {successMsg && (
               <View style={styles.successBanner}>
-                <Text style={styles.successText}>✅ {successMsg}</Text>
+                <Text style={styles.bannerText}>{successMsg}</Text>
               </View>
             )}
 
-            {/* Foto & Bounding Box Deteksi YOLO */}
+            {/* Image + Interactive YOLO Bounding Boxes */}
             {imgUri ? (
-              <View
-                style={styles.imageWrapper}
-                onLayout={(e) => {
-                  const { width, height } = e.nativeEvent.layout;
-                  setBoxAreaSize({ width, height });
-                }}>
-                <Image source={{ uri: imgUri }} style={styles.reportImage} resizeMode="stretch" />
-                {imgDims &&
-                  imgDims.width > 0 &&
-                  imgDims.height > 0 &&
-                  boxAreaSize.width > 0 &&
-                  detections.map((det) => {
-                    const scaleX = boxAreaSize.width / imgDims.width;
-                    const scaleY = boxAreaSize.height / imgDims.height;
-                    const left = det.bounding_box.x1 * scaleX;
-                    const top = det.bounding_box.y1 * scaleY;
-                    const width = Math.max(16, (det.bounding_box.x2 - det.bounding_box.x1) * scaleX);
-                    const height = Math.max(16, (det.bounding_box.y2 - det.bounding_box.y1) * scaleY);
-                    return (
-                      <View
-                        key={det.detection_id}
-                        style={[
-                          styles.bboxOverlay,
-                          { left, top, width, height },
-                        ]}>
-                        <View style={styles.bboxLabelTag}>
-                          <Text style={styles.bboxLabelText}>
-                            {det.class} {(det.confidence * 100).toFixed(0)}%
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  })}
+              <View style={styles.viewerContainer}>
+                <YoloDetectionViewer
+                  imageUri={imgUri}
+                  detections={detections}
+                  imageDimensions={imgDims}
+                  visionAvailable={Boolean(ai?.vision_service_available)}
+                  analyzed={Boolean(ai)}
+                />
               </View>
             ) : (
               <View style={styles.noImageBox}>
-                <Text style={styles.noImageText}>TANPA LAMPIRAN FOTO</Text>
+                <Text style={styles.noImageText}>Tanpa lampiran foto</Text>
               </View>
             )}
 
-            {/* Badges Status & Keparahan */}
+            {/* Badges */}
             <View style={styles.badgesRow}>
               <View style={[styles.badge, { backgroundColor: statusBadge.bg }]}>
                 <Text style={[styles.badgeText, { color: statusBadge.text }]}>
-                  STATUS: {statusBadge.label} ({report.status})
+                  Status: {statusBadge.label}
                 </Text>
               </View>
               <View style={[styles.badge, { backgroundColor: severityBadge.bg }]}>
                 <Text style={[styles.badgeText, { color: severityBadge.text }]}>
-                  {severityBadge.label}
+                  Keparahan: {severityBadge.label}
                 </Text>
               </View>
             </View>
 
-            {/* Judul & Deskripsi (Mode Baca vs Edit) */}
+            {/* Body vs Edit */}
             {isEditing ? (
               <View style={styles.editSection}>
                 <Text style={styles.fieldLabel}>Judul Laporan</Text>
@@ -241,80 +219,101 @@ export function ReportDetailModal({
                 />
                 <Text style={styles.fieldLabel}>Deskripsi Laporan</Text>
                 <TextInput
-                  style={[styles.textInput, { minHeight: 80 }]}
+                  style={[styles.textInput, styles.textArea]}
                   value={editDesc}
                   onChangeText={setEditDesc}
                   multiline
                 />
                 <View style={styles.editActions}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: '#C1FF72' }]}
+                    style={[styles.actionBtn, { backgroundColor: Palette.success, flex: 1 }]}
                     onPress={handleSaveEdit}
                     disabled={saving}>
                     <Text style={styles.actionBtnText}>
-                      {saving ? 'MENYIMPAN...' : '💾 SIMPAN PERUBAHAN'}
+                      {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: '#fff' }]}
+                    style={[styles.actionBtn, { backgroundColor: Palette.surface, flex: 1 }]}
                     onPress={() => setIsEditing(false)}>
-                    <Text style={styles.actionBtnText}>BATAL</Text>
+                    <Text style={styles.actionBtnText}>Batal</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             ) : (
               <View style={styles.infoBlock}>
                 <Text style={styles.reportTitle}>{report.title}</Text>
-                <Text style={styles.metaLine}>
-                  📅 Dilaporkan: {formatDateID(report.created_at)}
-                </Text>
-                <Text style={styles.metaLine}>
-                  📍 Lokasi: {report.address || 'Koordinat GPS'} ({report.latitude},{' '}
-                  {report.longitude})
-                </Text>
-                <Text style={styles.metaLine}>
-                  🏷️ Kategori: {formatCategoryLabel(report.category)}
-                </Text>
-                {report.reporter?.full_name && (
-                  <Text style={styles.metaLine}>
-                    👤 Pelapor: {report.reporter.full_name} ({report.reporter.email})
-                  </Text>
-                )}
+
+                <View style={styles.metaTable}>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaKey}>Tanggal</Text>
+                    <Text style={styles.metaVal}>{formatDateID(report.created_at)}</Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaKey}>Kategori</Text>
+                    <Text style={styles.metaVal}>{formatCategoryLabel(report.category)}</Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaKey}>Lokasi</Text>
+                    <Text style={styles.metaVal}>
+                      {report.address || 'Koordinat GPS'} ({report.latitude}, {report.longitude})
+                    </Text>
+                  </View>
+                  {report.reporter?.full_name ? (
+                    <View style={[styles.metaRow, { borderBottomWidth: 0 }]}>
+                      <Text style={styles.metaKey}>Pelapor</Text>
+                      <Text style={styles.metaVal}>
+                        {report.reporter.full_name} ({report.reporter.email})
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
 
                 <View style={styles.descBox}>
+                  <Text style={styles.descLabel}>Keterangan Laporan</Text>
                   <Text style={styles.descText}>
-                    {report.description || 'Tidak ada deskripsi.'}
+                    {report.description || 'Tidak ada keterangan tambahan.'}
                   </Text>
                 </View>
               </View>
             )}
 
-            {/* Kotak Analisis AI (YOLO Vision + Narrative Generator) */}
+            {/* AI Summary */}
             {ai && (
               <View style={styles.aiCard}>
-                <Text style={styles.aiHeader}>🤖 HASIL ANALISIS AI (YOLO VISION)</Text>
-                <Text style={styles.aiLine}>
-                  • Status Vision AI:{' '}
-                  {ai.vision_service_available ? 'Aktif (Terhubung)' : 'Fallback Teks'}
-                </Text>
-                <Text style={styles.aiLine}>
-                  • Klasifikasi Utama: {ai.primary_damage_label || formatCategoryLabel(report.category)}
-                </Text>
-                <Text style={styles.aiLine}>
-                  • Jumlah Titik Deteksi: {ai.total_detections} titik
-                </Text>
-                <Text style={styles.aiLine}>
-                  • Confidence Maksimum: {(Number(ai.max_confidence || 0) * 100).toFixed(1)}%
-                </Text>
-                <Text style={styles.aiLine}>
-                  • Generator Naratif: {ai.narrative_generator || 'template_orchestrator'}
-                </Text>
+                <Text style={styles.aiHeader}>Ringkasan Analisis Foto</Text>
+                <View style={styles.aiGrid}>
+                  <View style={styles.aiCell}>
+                    <Text style={styles.aiCellLabel}>Deteksi Visual</Text>
+                    <Text style={styles.aiCellValue}>
+                      {ai.vision_service_available ? 'Aktif' : 'Ringkasan Teks'}
+                    </Text>
+                  </View>
+                  <View style={styles.aiCell}>
+                    <Text style={styles.aiCellLabel}>Titik Terdeteksi</Text>
+                    <Text style={styles.aiCellValue}>{ai.total_detections} titik</Text>
+                  </View>
+                  <View style={styles.aiCell}>
+                    <Text style={styles.aiCellLabel}>Keyakinan Maks</Text>
+                    <Text style={styles.aiCellValue}>
+                      {(Number(ai.max_confidence || 0) * 100).toFixed(1)}%
+                    </Text>
+                  </View>
+                  <View style={styles.aiCell}>
+                    <Text style={styles.aiCellLabel}>Klasifikasi</Text>
+                    <Text style={styles.aiCellValue} numberOfLines={1}>
+                      {formatCategoryLabel(ai.primary_damage_label || report.category)}
+                    </Text>
+                  </View>
+                </View>
+
                 {ai.classes_detected && Object.keys(ai.classes_detected).length > 0 && (
                   <View style={styles.aiClassesBox}>
-                    <Text style={styles.aiSubTitle}>Rincian Kelas YOLO Terdeteksi:</Text>
+                    <Text style={styles.aiSubTitle}>Rincian Objek Terdeteksi</Text>
                     {Object.entries(ai.classes_detected).map(([cls, info]) => (
                       <Text key={cls} style={styles.aiClassItem}>
-                        ▸ {cls}: {info.count} titik (conf maks {(info.max_confidence * 100).toFixed(1)}%)
+                        - {cls}: {info.count} titik (keyakinan{' '}
+                        {(info.max_confidence * 100).toFixed(1)}%)
                       </Text>
                     ))}
                   </View>
@@ -322,76 +321,82 @@ export function ReportDetailModal({
               </View>
             )}
 
-            {/* Riwayat Perubahan Status (status_history) */}
+            {/* Timeline */}
             {report.status_history && report.status_history.length > 0 && (
               <View style={styles.historyCard}>
-                <Text style={styles.sectionSubHeader}>📜 RIWAYAT STATUS LAPORAN</Text>
-                {report.status_history.map((item) => (
-                  <View key={item.id} style={styles.historyRow}>
-                    <Text style={styles.historyStatus}>
-                      {item.previous_status ? `${item.previous_status} → ` : ''}
-                      {item.new_status.toUpperCase()}
-                    </Text>
-                    <Text style={styles.historyNotes}>{item.notes || '-'}</Text>
-                    <Text style={styles.historyDate}>{formatDateID(item.created_at)}</Text>
-                  </View>
-                ))}
+                <Text style={styles.sectionSubHeader}>Riwayat Penanganan</Text>
+                {report.status_history.map((item) => {
+                  const nextLabel = formatStatusBadge(item.new_status).label;
+                  const prevLabel = item.previous_status
+                    ? formatStatusBadge(item.previous_status).label
+                    : null;
+                  return (
+                    <View key={item.id} style={styles.historyRow}>
+                      <Text style={styles.historyStatus}>
+                        {prevLabel ? `${prevLabel} -> ` : ''}
+                        {nextLabel}
+                      </Text>
+                      <Text style={styles.historyNotes}>{item.notes || '-'}</Text>
+                      <Text style={styles.historyDate}>{formatDateID(item.created_at)}</Text>
+                    </View>
+                  );
+                })}
               </View>
             )}
 
-            {/* Panel Simulasi & Aksi Pengujian Lokal */}
+            {/* Management Controls */}
             <View style={styles.actionsCard}>
-              <Text style={styles.sectionSubHeader}>⚙️ PANEL AKSI & UJI STATUS</Text>
+              <Text style={styles.sectionSubHeader}>Kelola Status & Laporan</Text>
               <View style={styles.statusSimulatorRow}>
                 <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: '#fff' }]}
-                  onPress={() => handleChangeStatus('submitted', 'MENUNGGU')}
+                  style={[styles.simBtn, { backgroundColor: Palette.pending }]}
+                  onPress={() => handleChangeStatus('submitted', 'Menunggu')}
                   disabled={saving}>
-                  <Text style={styles.simBtnText}>Set MENUNGGU</Text>
+                  <Text style={styles.simBtnText}>Menunggu</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: '#FFD700' }]}
-                  onPress={() => handleChangeStatus('in_progress', 'PROSES')}
+                  style={[styles.simBtn, { backgroundColor: Palette.yellow }]}
+                  onPress={() => handleChangeStatus('in_progress', 'Diproses')}
                   disabled={saving}>
-                  <Text style={styles.simBtnText}>Set PROSES</Text>
+                  <Text style={styles.simBtnText}>Diproses</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: '#32CD32' }]}
-                  onPress={() => handleChangeStatus('fixed', 'SELESAI')}
+                  style={[styles.simBtn, { backgroundColor: Palette.success }]}
+                  onPress={() => handleChangeStatus('fixed', 'Selesai')}
                   disabled={saving}>
-                  <Text style={styles.simBtnText}>Set SELESAI</Text>
+                  <Text style={styles.simBtnText}>Selesai</Text>
                 </TouchableOpacity>
               </View>
 
               <View style={styles.bottomActionRow}>
                 {!isEditing && (
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: '#FADCB6', flex: 1 }]}
+                    style={[styles.actionBtn, { backgroundColor: Palette.canvas, flex: 1 }]}
                     onPress={() => setIsEditing(true)}>
-                    <Text style={styles.actionBtnText}>✏️ EDIT LAPORAN</Text>
+                    <Text style={styles.actionBtnText}>Edit Laporan</Text>
                   </TouchableOpacity>
                 )}
 
                 {!confirmDelete ? (
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: '#FCA5A5', flex: 1 }]}
+                    style={[styles.actionBtn, { backgroundColor: Palette.danger, flex: 1 }]}
                     onPress={() => setConfirmDelete(true)}>
-                    <Text style={styles.actionBtnText}>🗑️ HAPUS</Text>
+                    <Text style={styles.actionBtnText}>Hapus</Text>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: '#FF4D4D', flex: 1 }]}
+                    style={[styles.actionBtn, { backgroundColor: Palette.dangerSolid, flex: 1 }]}
                     onPress={handleDelete}
                     disabled={saving}>
-                    <Text style={[styles.actionBtnText, { color: '#fff' }]}>
-                      ⚠️ YAKIN HAPUS?
+                    <Text style={[styles.actionBtnText, { color: Palette.surface }]}>
+                      Konfirmasi Hapus
                     </Text>
                   </TouchableOpacity>
                 )}
               </View>
             </View>
 
-            <View style={{ height: 30 }} />
+            <View style={{ height: 24 }} />
           </ScrollView>
         </View>
       </View>
@@ -402,50 +407,65 @@ export function ReportDetailModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: 'rgba(17, 24, 39, 0.72)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
   modalCard: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 580,
     maxHeight: '92%',
-    backgroundColor: '#F3F4F6',
-    borderWidth: 4,
-    borderColor: '#000',
-    shadowColor: '#000',
-    shadowOffset: { width: 8, height: 8 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    backgroundColor: Palette.canvas,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    ...BrutalShadow.lg,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FF5E00',
+    backgroundColor: Palette.surface,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderColor: '#000',
+    borderBottomWidth: 2.5,
+    borderColor: Palette.ink,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerTag: {
+    backgroundColor: Palette.accent,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  headerTagText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Palette.accentText,
+    letterSpacing: 0.7,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '900',
-    color: '#fff',
-    letterSpacing: 1,
+    color: Palette.ink,
   },
   closeBtn: {
-    backgroundColor: '#fff',
+    backgroundColor: Palette.canvas,
     borderWidth: 2,
-    borderColor: '#000',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    ...BrutalShadow.sm,
   },
   closeBtnText: {
     fontSize: 12,
-    fontWeight: '900',
-    color: '#000',
+    fontWeight: '800',
+    color: Palette.ink,
   },
   bodyScroll: {
     padding: 16,
@@ -453,219 +473,231 @@ const styles = StyleSheet.create({
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
     gap: 8,
   },
   loadingText: {
-    fontWeight: 'bold',
-    color: '#000',
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.ink,
   },
   errorBanner: {
-    backgroundColor: '#FCA5A5',
+    backgroundColor: Palette.danger,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     padding: 10,
     marginBottom: 12,
-  },
-  errorText: {
-    color: '#000',
-    fontWeight: 'bold',
-    fontSize: 13,
   },
   successBanner: {
-    backgroundColor: '#C1FF72',
+    backgroundColor: Palette.success,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     padding: 10,
     marginBottom: 12,
   },
-  successText: {
-    color: '#000',
-    fontWeight: 'bold',
+  bannerText: {
+    color: Palette.ink,
+    fontWeight: '800',
     fontSize: 13,
   },
-  imageWrapper: {
-    width: '100%',
-    height: 220,
-    borderWidth: 3,
-    borderColor: '#000',
-    backgroundColor: '#000',
+  viewerContainer: {
     marginBottom: 14,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  reportImage: {
-    width: '100%',
-    height: '100%',
-  },
-  bboxOverlay: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: '#FF5E00',
-    backgroundColor: 'rgba(255, 94, 0, 0.2)',
-  },
-  bboxLabelTag: {
-    backgroundColor: '#FF5E00',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    alignSelf: 'flex-start',
-  },
-  bboxLabelText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '900',
   },
   noImageBox: {
     width: '100%',
-    height: 100,
-    borderWidth: 3,
-    borderColor: '#000',
-    backgroundColor: '#E5E7EB',
+    height: 92,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    backgroundColor: Palette.surface,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 14,
   },
   noImageText: {
-    fontWeight: '900',
-    color: '#666',
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.inkMuted,
   },
   badgesRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   badge: {
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
   },
   badgeText: {
     fontSize: 11,
     fontWeight: '900',
   },
   infoBlock: {
-    marginBottom: 16,
+    marginBottom: 14,
+    gap: 10,
   },
   reportTitle: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 8,
+    color: Palette.ink,
+    lineHeight: 25,
   },
-  metaLine: {
+  metaTable: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  metaRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    gap: 2,
+  },
+  metaKey: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  metaVal: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 4,
+    color: Palette.ink,
   },
   descBox: {
-    marginTop: 10,
-    backgroundColor: '#fff',
+    backgroundColor: Palette.surface,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     padding: 12,
+    gap: 4,
+  },
+  descLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   descText: {
     fontSize: 14,
-    color: '#000',
-    lineHeight: 20,
+    color: Palette.ink,
+    lineHeight: 21,
   },
   aiCard: {
-    backgroundColor: '#FEF3C7',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 12,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    backgroundColor: Palette.highlight,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+    ...BrutalShadow.sm,
   },
   aiHeader: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 6,
+    color: Palette.ink,
   },
-  aiLine: {
+  aiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  aiCell: {
+    width: '48.5%',
+    backgroundColor: Palette.surface,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    padding: 9,
+    gap: 2,
+  },
+  aiCellLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+    textTransform: 'uppercase',
+  },
+  aiCellValue: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#000',
-    marginBottom: 3,
+    fontWeight: '900',
+    color: Palette.ink,
   },
   aiClassesBox: {
-    marginTop: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderColor: '#000',
+    paddingTop: 8,
+    borderTopWidth: 1.5,
+    borderTopColor: Palette.ink,
+    gap: 3,
   },
   aiSubTitle: {
     fontSize: 12,
-    fontWeight: '900',
-    color: '#000',
-    marginBottom: 2,
+    fontWeight: '800',
+    color: Palette.ink,
   },
   aiClassItem: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#000',
+    fontWeight: '600',
+    color: Palette.ink,
   },
   historyCard: {
-    backgroundColor: '#E5E7EB',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 14,
+    marginBottom: 14,
+    gap: 8,
   },
   sectionSubHeader: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 8,
+    color: Palette.ink,
+    marginBottom: 2,
   },
   historyRow: {
     borderLeftWidth: 3,
-    borderColor: '#FF5E00',
-    paddingLeft: 8,
-    marginBottom: 8,
+    borderColor: Palette.accent,
+    paddingLeft: 10,
+    paddingVertical: 2,
+    gap: 2,
   },
   historyStatus: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.ink,
   },
   historyNotes: {
     fontSize: 12,
-    color: '#111',
+    color: Palette.ink,
   },
   historyDate: {
     fontSize: 11,
-    color: '#555',
+    color: Palette.inkSubtle,
   },
   actionsCard: {
-    backgroundColor: '#fff',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 12,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 14,
+    gap: 10,
   },
   statusSimulatorRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
   },
   simBtn: {
     flex: 1,
     borderWidth: 2,
-    borderColor: '#000',
-    paddingVertical: 8,
+    borderColor: Palette.ink,
+    paddingVertical: 9,
     alignItems: 'center',
   },
   simBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.ink,
   },
   bottomActionRow: {
     flexDirection: 'row',
@@ -673,7 +705,7 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     paddingVertical: 10,
     paddingHorizontal: 12,
     alignItems: 'center',
@@ -681,29 +713,38 @@ const styles = StyleSheet.create({
   actionBtnText: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.ink,
   },
   editSection: {
-    marginBottom: 16,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 14,
+    marginBottom: 14,
   },
   fieldLabel: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#000',
-    marginBottom: 4,
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
+    marginBottom: 5,
   },
   textInput: {
-    backgroundColor: '#fff',
+    backgroundColor: Palette.surfaceAlt,
     borderWidth: 2,
-    borderColor: '#000',
-    padding: 10,
+    borderColor: Palette.ink,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
     fontSize: 14,
-    color: '#000',
+    color: Palette.ink,
     marginBottom: 10,
+  },
+  textArea: {
+    minHeight: 84,
+    textAlignVertical: 'top',
   },
   editActions: {
     flexDirection: 'row',
     gap: 10,
+    marginTop: 4,
   },
 });
-

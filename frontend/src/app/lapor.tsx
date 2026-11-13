@@ -1,124 +1,50 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
-  View,
-  TouchableOpacity,
-  ScrollView,
   TextInput,
-  Image,
-  ActivityIndicator,
-  Platform,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, router } from 'expo-router';
+
+import { YoloDetectionViewer } from '@/components/yolo-detection-viewer';
+import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
-  SampleImageItem,
   DraftAnalysisResponse,
-  getSampleImages,
   analyzeReportDraftApi,
   createReportApi,
-  resolveImageUrl,
-  formatSeverityBadge,
   formatCategoryLabel,
+  formatSeverityBadge,
+  formatStatusBadge,
   getAuthToken,
-  loginOrRegisterDemoUser,
 } from '@/services/api';
 
-const FALLBACK_SAMPLES: SampleImageItem[] = [
-  {
-    id: 'rusak3.jpg',
-    filename: 'rusak3.jpg',
-    label: 'Lubang Jalan Parah & Genangan',
-    image_url: '/samples/rusak3.jpg',
-    address: 'Jl. D.I. Panjaitan No. 18, Jatinegara, Jakarta Timur',
-    latitude: -6.2255,
-    longitude: 106.871,
-    description: 'Banyak kubangan lubang aspal dalam dan tergenang air di lajur kiri',
-  },
-  {
-    id: 'rusak1.jpeg',
-    filename: 'rusak1.jpeg',
-    label: 'Lubang & Retak Permukaan',
-    image_url: '/samples/rusak1.jpeg',
-    address: 'Jl. Gajah Mada No. 12, Gambir, Jakarta Pusat',
-    latitude: -6.1628,
-    longitude: 106.8195,
-    description: 'Lubang jalan cukup dalam dekat halte busway membahayakan pengendara motor',
-  },
-  {
-    id: 'rusak2.jpg',
-    filename: 'rusak2.jpg',
-    label: 'Kerusakan & Pengelupasan Aspal',
-    image_url: '/samples/rusak2.jpg',
-    address: 'Jl. Gatot Subroto Kav. 32, Kuningan, Jakarta Selatan',
-    latitude: -6.2349,
-    longitude: 106.8236,
-    description: 'Permukaan aspal mengelupas dan berlubang pasca hujan deras',
-  },
-  {
-    id: 'road.jpg',
-    filename: 'road.jpg',
-    label: 'Jalan Mulus / Normal (Uji 0 Deteksi)',
-    image_url: '/samples/road.jpg',
-    address: 'Jl. M.H. Thamrin No. 1, Menteng, Jakarta Pusat',
-    latitude: -6.1931,
-    longitude: 106.823,
-    description: 'Kondisi aspal mulus dan marka jalan terlihat rapi',
-  },
-];
-
 export default function LaporScreen() {
-  const [samples, setSamples] = useState<SampleImageItem[]>(FALLBACK_SAMPLES);
-  const [selectedSample, setSelectedSample] = useState<string>('rusak3.jpg');
-  const [webFile, setWebFile] = useState<File | null>(null);
-  const [previewUri, setPreviewUri] = useState<string | null>(
-    resolveImageUrl('/samples/rusak3.jpg')
-  );
+  const isAuthenticated = Boolean(getAuthToken());
 
-  const [address, setAddress] = useState(FALLBACK_SAMPLES[0].address);
-  const [latitude, setLatitude] = useState(String(FALLBACK_SAMPLES[0].latitude));
-  const [longitude, setLongitude] = useState(String(FALLBACK_SAMPLES[0].longitude));
-  const [userNotes, setUserNotes] = useState(FALLBACK_SAMPLES[0].description);
+  const [webFile, setWebFile] = useState<File | null>(null);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+
+  const [address, setAddress] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
+  const [userNotes, setUserNotes] = useState('');
 
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<DraftAnalysisResponse | null>(null);
 
-  // State draf hasil AI yang dapat diedit warga sebelum dikirim
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDesc, setDraftDesc] = useState('');
   const [draftCategory, setDraftCategory] = useState('pothole');
   const [draftSeverity, setDraftSeverity] = useState<'low' | 'medium' | 'high'>('high');
-
-  const [previewLayout, setPreviewLayout] = useState<{ width: number; height: number }>({
-    width: 0,
-    height: 0,
-  });
-
-  useEffect(() => {
-    getSampleImages()
-      .then((list) => {
-        if (list && list.length > 0) {
-          setSamples(list);
-        }
-      })
-      .catch(() => {
-        // Gunakan fallback samples
-      });
-  }, []);
-
-  const handleSelectSample = (sample: SampleImageItem) => {
-    setWebFile(null);
-    setSelectedSample(sample.filename);
-    setPreviewUri(resolveImageUrl(sample.image_url));
-    setAddress(sample.address);
-    setLatitude(String(sample.latitude));
-    setLongitude(String(sample.longitude));
-    setUserNotes(sample.description);
-    setAnalysisData(null);
-    setErrorMsg(null);
-  };
 
   const handlePickWebFile = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -129,7 +55,6 @@ export default function LaporScreen() {
       const file = e.target?.files?.[0];
       if (file) {
         setWebFile(file);
-        setSelectedSample('');
         setPreviewUri(URL.createObjectURL(file));
         setAnalysisData(null);
         setErrorMsg(null);
@@ -144,32 +69,49 @@ export default function LaporScreen() {
         (pos) => {
           setLatitude(pos.coords.latitude.toFixed(6));
           setLongitude(pos.coords.longitude.toFixed(6));
+          setErrorMsg(null);
         },
         () => {
-          setErrorMsg('Gagal mengakses GPS browser, menggunakan koordinat default Jakarta.');
+          setErrorMsg('Akses lokasi browser ditolak. Silakan isi koordinat secara manual.');
         }
       );
     }
   };
 
-  const ensureAuthenticated = async () => {
-    if (!getAuthToken()) {
-      await loginOrRegisterDemoUser();
+  const validateLocationFields = (): boolean => {
+    if (!address.trim()) {
+      setErrorMsg('Alamat atau patokan jalan wajib diisi.');
+      return false;
     }
+    const latNum = Number(latitude);
+    const lngNum = Number(longitude);
+    if (!latitude.trim() || !longitude.trim() || Number.isNaN(latNum) || Number.isNaN(lngNum)) {
+      setErrorMsg('Koordinat lokasi wajib diisi. Gunakan tombol GPS atau isi Latitude & Longitude.');
+      return false;
+    }
+    return true;
   };
 
   const handleAnalyzeWithAI = async () => {
-    setAnalyzing(true);
     setErrorMsg(null);
+    if (!getAuthToken()) {
+      router.replace('/signup?mode=login' as any);
+      return;
+    }
+    if (!webFile) {
+      setErrorMsg('Silakan pilih atau unggah foto kondisi jalan terlebih dahulu.');
+      return;
+    }
+    if (!validateLocationFields()) return;
+
+    setAnalyzing(true);
     try {
-      await ensureAuthenticated();
       const result = await analyzeReportDraftApi({
         webFile,
-        sampleImage: webFile ? null : selectedSample,
         latitude,
         longitude,
-        address,
-        description: userNotes,
+        address: address.trim(),
+        description: userNotes.trim(),
         uploadImage: true,
       });
       setAnalysisData(result);
@@ -178,30 +120,38 @@ export default function LaporScreen() {
       setDraftCategory(result.draft.category);
       setDraftSeverity(result.draft.severity);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Gagal menjalankan analisis AI.');
+      setErrorMsg(err.message || 'Gagal menjalankan analisis foto.');
     } finally {
       setAnalyzing(false);
     }
   };
 
   const handleSubmitReport = async () => {
-    setSubmitting(true);
     setErrorMsg(null);
+    if (!getAuthToken()) {
+      router.replace('/signup?mode=login' as any);
+      return;
+    }
+    if (!webFile && !analysisData?.draft.image_url) {
+      setErrorMsg('Silakan unggah foto kondisi jalan terlebih dahulu sebelum mengirim laporan.');
+      return;
+    }
+    if (!validateLocationFields()) return;
+
+    setSubmitting(true);
     try {
-      await ensureAuthenticated();
       await createReportApi({
         title: analysisData ? draftTitle : undefined,
-        description: analysisData ? draftDesc : userNotes,
+        description: analysisData ? draftDesc : userNotes.trim(),
         category: analysisData ? draftCategory : undefined,
         severity: analysisData ? draftSeverity : undefined,
         latitude,
         longitude,
-        address,
-        image_url: analysisData?.draft.image_url || (selectedSample ? `/samples/${selectedSample}` : undefined),
+        address: address.trim(),
+        image_url: analysisData?.draft.image_url || undefined,
         ai_analysis: analysisData?.ai_analysis || null,
         status: analysisData?.draft.suggested_status || 'submitted',
         webFile: analysisData ? null : webFile,
-        sampleImage: analysisData ? null : selectedSample || null,
       });
       router.replace('/riwayat' as any);
     } catch (err: any) {
@@ -213,539 +163,792 @@ export default function LaporScreen() {
 
   const detections = analysisData?.ai_analysis?.detections || [];
   const imgDims = analysisData?.ai_analysis?.image_dimensions;
+  const recommendedStatus = analysisData
+    ? formatStatusBadge(analysisData.draft.suggested_status)
+    : null;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Top Bar */}
-      <View style={styles.topBar}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backBtnText}>← KEMBALI</Text>
-        </TouchableOpacity>
-        <Text style={styles.topBarTitle}>LAPOR JALAN RUSAK (AI)</Text>
+      <View style={styles.topBarWrap}>
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.backBtn}
+            onPress={() => router.back()}>
+            <Text style={styles.backBtnText}>Kembali</Text>
+          </TouchableOpacity>
+          <View style={styles.topBarCopy}>
+            <Text style={styles.topBarTitle}>Buat Laporan Jalan</Text>
+          </View>
+          {isAuthenticated && (
+            <View style={styles.stepPill}>
+              <Text style={styles.stepPillText}>
+                {analysisData ? 'Langkah 3/3' : 'Langkah 1-2'}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
 
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        {errorMsg && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
-          </View>
-        )}
-
-        {/* TAHAP 1: PILIH FOTO */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeader}>1. FOTO KONDISI JALAN</Text>
-
-          {Platform.OS === 'web' && (
-            <TouchableOpacity style={styles.uploadFileBtn} onPress={handlePickWebFile}>
-              <Text style={styles.uploadFileBtnText}>
-                📷 {webFile ? `File Terpilih: ${webFile.name}` : 'UNGGAH FOTO DARI KOMPUTER'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <Text style={styles.subLabel}>
-            Atau klik salah satu sampel citra uji Road-AI di bawah ini:
-          </Text>
-          <View style={styles.sampleGrid}>
-            {samples.map((s) => {
-              const isSelected = !webFile && selectedSample === s.filename;
-              return (
-                <TouchableOpacity
-                  key={s.id}
-                  style={[
-                    styles.sampleChip,
-                    isSelected && styles.sampleChipSelected,
-                  ]}
-                  onPress={() => handleSelectSample(s)}>
-                  <Text
-                    style={[
-                      styles.sampleChipTitle,
-                      isSelected && { color: '#fff' },
-                    ]}>
-                    {s.filename}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.sampleChipSub,
-                      isSelected && { color: '#FEF3C7' },
-                    ]}
-                    numberOfLines={1}>
-                    {s.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Preview Gambar + Overlay Bounding Box YOLO */}
-          {previewUri && (
-            <View
-              style={styles.previewBox}
-              onLayout={(e) => {
-                const { width, height } = e.nativeEvent.layout;
-                setPreviewLayout({ width, height });
-              }}>
-              <Image
-                source={{ uri: previewUri }}
-                style={styles.previewImage}
-                resizeMode="stretch"
-              />
-              {imgDims &&
-                imgDims.width > 0 &&
-                imgDims.height > 0 &&
-                previewLayout.width > 0 &&
-                detections.map((det) => {
-                  const scaleX = previewLayout.width / imgDims.width;
-                  const scaleY = previewLayout.height / imgDims.height;
-                  const left = det.bounding_box.x1 * scaleX;
-                  const top = det.bounding_box.y1 * scaleY;
-                  const width = Math.max(
-                    18,
-                    (det.bounding_box.x2 - det.bounding_box.x1) * scaleX
-                  );
-                  const height = Math.max(
-                    18,
-                    (det.bounding_box.y2 - det.bounding_box.y1) * scaleY
-                  );
-                  return (
-                    <View
-                      key={det.detection_id}
-                      style={[styles.bbox, { left, top, width, height }]}>
-                      <View style={styles.bboxTag}>
-                        <Text style={styles.bboxTagText}>
-                          {det.class} {(det.confidence * 100).toFixed(0)}%
-                        </Text>
-                      </View>
-                    </View>
-                  );
-                })}
-            </View>
-          )}
-        </View>
-
-        {/* TAHAP 2: LOKASI & CATATAN WARGA */}
-        <View style={styles.sectionCard}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.sectionHeader}>2. LOKASI & KETERANGAN</Text>
-            {Platform.OS === 'web' && (
-              <TouchableOpacity style={styles.gpsBtn} onPress={handleGetBrowserLocation}>
-                <Text style={styles.gpsBtnText}>📍 GPS Saat Ini</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <Text style={styles.inputLabel}>Alamat / Nama Jalan</Text>
-          <TextInput
-            style={styles.input}
-            value={address}
-            onChangeText={setAddress}
-            placeholder="Contoh: Jl. D.I. Panjaitan No. 18, Jakarta Timur"
-            placeholderTextColor="#666"
-          />
-
-          <View style={styles.coordRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Latitude</Text>
-              <TextInput
-                style={styles.input}
-                value={latitude}
-                onChangeText={setLatitude}
-                keyboardType="numeric"
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Longitude</Text>
-              <TextInput
-                style={styles.input}
-                value={longitude}
-                onChangeText={setLongitude}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          <Text style={styles.inputLabel}>Catatan Tambahan Warga (Opsional)</Text>
-          <TextInput
-            style={[styles.input, { minHeight: 65 }]}
-            value={userNotes}
-            onChangeText={setUserNotes}
-            multiline
-            placeholder="Jelaskan kondisi jalan (misal: lubang tergenang air di lajur kiri)"
-            placeholderTextColor="#666"
-          />
-
-          {/* Tombol Analisis AI */}
-          <TouchableOpacity
-            style={styles.analyzeBtn}
-            onPress={handleAnalyzeWithAI}
-            disabled={analyzing || submitting}>
-            {analyzing ? (
-              <View style={styles.btnRow}>
-                <ActivityIndicator size="small" color="#fff" />
-                <Text style={styles.analyzeBtnText}>
-                  MENGANALISIS FOTO DENGAN YOLO AI...
-                </Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
+          {!isAuthenticated ? (
+            <View style={styles.authGateCard}>
+              <View style={styles.authGateTag}>
+                <Text style={styles.authGateTagText}>AKSES TERDAFTAR</Text>
               </View>
-            ) : (
-              <Text style={styles.analyzeBtnText}>
-                🤖 1. ANALISIS AI (DETEKSI YOLO + SUSUN DRAF)
+              <Text style={styles.authGateTitle}>
+                Daftar atau Masuk Terlebih Dahulu
               </Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* TAHAP 3: HASIL DETEKSI AI & KONFIRMASI DRAF */}
-        {analysisData && (
-          <View style={[styles.sectionCard, { backgroundColor: '#FEF3C7' }]}>
-            <Text style={styles.sectionHeader}>
-              3. HASIL DETEKSI AI & DRAF LAPORAN
-            </Text>
-
-            <View style={styles.aiMetricsBox}>
-              <Text style={styles.metricLine}>
-                🔍 Status Road-AI YOLO:{' '}
-                {analysisData.ai_analysis.vision_service_available
-                  ? 'ONLINE (Deteksi Visual Aktif)'
-                  : 'Mode Fallback Naratif Teks'}
+              <Text style={styles.authGateDesc}>
+                Untuk menjaga keaslian laporan dan memudahkan pemantauan tindak lanjut di lapangan,
+                warga perlu mendaftar dan masuk ke akun sebelum membuat laporan kerusakan jalan.
               </Text>
-              <Text style={styles.metricLine}>
-                🎯 Total Titik Terdeteksi: {analysisData.ai_analysis.total_detections} titik
-              </Text>
-              <Text style={styles.metricLine}>
-                📊 Akurasi (Confidence) Maks:{' '}
-                {(analysisData.ai_analysis.max_confidence * 100).toFixed(1)}%
-              </Text>
-              <Text style={styles.metricLine}>
-                🏷️ Klasifikasi Utama: {analysisData.ai_analysis.primary_damage_label}
-              </Text>
-              <Text style={styles.metricLine}>
-                🚦 Rekomendasi Status:{' '}
-                {analysisData.draft.suggested_status.toUpperCase()}{' '}
-                {analysisData.draft.needs_manual_review
-                  ? '(Perlu Tinjauan Moderator)'
-                  : '(Siap Diproses Otomatis)'}
-              </Text>
-            </View>
 
-            <Text style={styles.inputLabel}>Judul Draf Laporan (Dapat Diedit)</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: '#fff' }]}
-              value={draftTitle}
-              onChangeText={setDraftTitle}
-            />
+              <View style={styles.authGateActions}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.authPrimaryBtn}
+                  onPress={() => router.push('/signup?mode=signup' as any)}>
+                  <Text style={styles.authPrimaryBtnText}>Daftar Akun Warga</Text>
+                </TouchableOpacity>
 
-            <Text style={styles.inputLabel}>Deskripsi Naratif AI (Dapat Diedit)</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: '#fff', minHeight: 90 }]}
-              value={draftDesc}
-              onChangeText={setDraftDesc}
-              multiline
-            />
-
-            <Text style={styles.inputLabel}>Tingkat Keparahan (Severity)</Text>
-            <View style={styles.severitySelector}>
-              {(['low', 'medium', 'high'] as const).map((sev) => {
-                const badge = formatSeverityBadge(sev);
-                const active = draftSeverity === sev;
-                return (
-                  <TouchableOpacity
-                    key={sev}
-                    style={[
-                      styles.sevOption,
-                      { backgroundColor: active ? badge.bg : '#fff' },
-                      active && { borderWidth: 3 },
-                    ]}
-                    onPress={() => setDraftSeverity(sev)}>
-                    <Text
-                      style={[
-                        styles.sevOptionText,
-                        { color: active ? badge.text : '#000' },
-                      ]}>
-                      {sev.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* TOMBOL KIRIM LAPORAN RESMI */}
-        <TouchableOpacity
-          style={styles.submitBtn}
-          onPress={handleSubmitReport}
-          disabled={submitting || analyzing}>
-          {submitting ? (
-            <View style={styles.btnRow}>
-              <ActivityIndicator size="small" color="#000" />
-              <Text style={styles.submitBtnText}>MENGIRIM LAPORAN...</Text>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.authSecondaryBtn}
+                  onPress={() => router.push('/signup?mode=login' as any)}>
+                  <Text style={styles.authSecondaryBtnText}>Sudah Punya Akun? Masuk</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
-            <Text style={styles.submitBtnText}>
-              🚀 {analysisData ? '2. KONFIRMASI & KIRIM LAPORAN RESMI' : 'KIRIM LAPORAN SEKARANG'}
-            </Text>
-          )}
-        </TouchableOpacity>
+            <>
+              {errorMsg && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorTitle}>Perhatian</Text>
+                  <Text style={styles.errorText}>{errorMsg}</Text>
+                </View>
+              )}
 
-        <View style={{ height: 60 }} />
+              {/* Langkah 1: Foto */}
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>01</Text>
+                  </View>
+                  <View style={styles.cardHeaderCopy}>
+                    <Text style={styles.cardTitle}>Dokumentasi Foto Jalan</Text>
+                    <Text style={styles.cardSub}>
+                      Unggah foto kerusakan jalan dari perangkat Anda (format JPG, PNG, atau WEBP).
+                    </Text>
+                  </View>
+                </View>
+
+                {Platform.OS === 'web' ? (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    style={styles.uploadBtn}
+                    onPress={handlePickWebFile}>
+                    <Text style={styles.uploadBtnText}>
+                      {webFile ? `Ganti Foto (${webFile.name})` : 'Pilih Foto Kondisi Jalan'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.platformNotice}>
+                    <Text style={styles.platformNoticeText}>
+                      Unggah foto langsung tersedia melalui akses peramban web pada perangkat ini.
+                    </Text>
+                  </View>
+                )}
+
+                {previewUri ? (
+                  <View style={styles.previewWrap}>
+                    <View style={styles.previewBox}>
+                      <Image
+                        source={{ uri: previewUri }}
+                        style={styles.previewImage}
+                        resizeMode="cover"
+                      />
+                    </View>
+                    <Text style={styles.previewHint}>
+                      {analysisData
+                        ? 'Foto telah dianalisis. Lihat kotak deteksi dan akurasi YOLO pada Langkah 03 di bawah.'
+                        : 'Foto siap dianalisis. Lanjutkan isi lokasi dan jalankan analisis pada Langkah 02.'}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.emptyPreviewBox}>
+                    <Text style={styles.emptyPreviewTitle}>Belum ada foto dipilih</Text>
+                    <Text style={styles.emptyPreviewSub}>
+                      Pratinjau foto akan tampil di sini sebelum dianalisis.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Langkah 2: Lokasi & Keterangan */}
+              <View style={styles.card}>
+                <View style={styles.cardHeaderBetween}>
+                  <View style={styles.cardHeaderLeft}>
+                    <View style={styles.stepBadge}>
+                      <Text style={styles.stepBadgeText}>02</Text>
+                    </View>
+                    <View style={styles.cardHeaderCopy}>
+                      <Text style={styles.cardTitle}>Lokasi & Catatan Lapangan</Text>
+                      <Text style={styles.cardSub}>
+                        Isi alamat jalan serta titik koordinat lokasi kerusakan.
+                      </Text>
+                    </View>
+                  </View>
+
+                  {Platform.OS === 'web' && (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      style={styles.gpsBtn}
+                      onPress={handleGetBrowserLocation}>
+                      <Text style={styles.gpsBtnText}>Gunakan GPS</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <Text style={styles.inputLabel}>Alamat atau Patokan Jalan</Text>
+                <TextInput
+                  style={styles.input}
+                  value={address}
+                  onChangeText={setAddress}
+                  placeholder="Masukkan nama jalan, nomor, dan kelurahan/kecamatan"
+                  placeholderTextColor={Palette.inkSubtle}
+                />
+
+                <View style={styles.coordRow}>
+                  <View style={styles.coordCol}>
+                    <Text style={styles.inputLabel}>Latitude</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={latitude}
+                      onChangeText={setLatitude}
+                      placeholder="-6.200000"
+                      placeholderTextColor={Palette.inkSubtle}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={styles.coordCol}>
+                    <Text style={styles.inputLabel}>Longitude</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={longitude}
+                      onChangeText={setLongitude}
+                      placeholder="106.816666"
+                      placeholderTextColor={Palette.inkSubtle}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </View>
+
+                <Text style={styles.inputLabel}>Keterangan Tambahan (Opsional)</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={userNotes}
+                  onChangeText={setUserNotes}
+                  multiline
+                  placeholder="Jelaskan kondisi sekitar, misalnya lubang cukup dalam di lajur kiri"
+                  placeholderTextColor={Palette.inkSubtle}
+                />
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.analyzeBtn, (analyzing || submitting) && styles.btnDisabled]}
+                  onPress={handleAnalyzeWithAI}
+                  disabled={analyzing || submitting}>
+                  {analyzing ? (
+                    <View style={styles.btnRow}>
+                      <ActivityIndicator size="small" color={Palette.accentText} />
+                      <Text style={styles.analyzeBtnText}>
+                        Menganalisis foto dan menyusun draf...
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.analyzeBtnText}>
+                      Analisis Foto & Susun Draf Laporan
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Langkah 3: Hasil Analisis & Edit Draf */}
+              {analysisData && (
+                <View style={[styles.card, styles.reviewCard]}>
+                  <View style={styles.cardHeader}>
+                    <View style={[styles.stepBadge, { backgroundColor: Palette.accent }]}>
+                      <Text style={[styles.stepBadgeText, { color: Palette.accentText }]}>03</Text>
+                    </View>
+                    <View style={styles.cardHeaderCopy}>
+                      <Text style={styles.cardTitle}>Tinjau Hasil Analisis & Draf</Text>
+                      <Text style={styles.cardSub}>
+                        Periksa dan sesuaikan isi draf sebelum dikirim ke sistem.
+                      </Text>
+                    </View>
+                  </View>
+
+                  {previewUri && (
+                    <View style={{ marginBottom: 14 }}>
+                      <YoloDetectionViewer
+                        imageUri={previewUri}
+                        detections={detections}
+                        imageDimensions={imgDims}
+                        visionAvailable={Boolean(analysisData.ai_analysis.vision_service_available)}
+                        analyzed
+                      />
+                    </View>
+                  )}
+
+                  <View style={styles.metricsGrid}>
+                    <View style={styles.metricCell}>
+                      <Text style={styles.metricLabel}>Deteksi Visual</Text>
+                      <Text style={styles.metricValue}>
+                        {analysisData.ai_analysis.vision_service_available
+                          ? 'Aktif'
+                          : 'Ringkasan Teks'}
+                      </Text>
+                    </View>
+                    <View style={styles.metricCell}>
+                      <Text style={styles.metricLabel}>Titik Kerusakan</Text>
+                      <Text style={styles.metricValue}>
+                        {analysisData.ai_analysis.total_detections} titik
+                      </Text>
+                    </View>
+                    <View style={styles.metricCell}>
+                      <Text style={styles.metricLabel}>Keyakinan Maks</Text>
+                      <Text style={styles.metricValue}>
+                        {(analysisData.ai_analysis.max_confidence * 100).toFixed(1)}%
+                      </Text>
+                    </View>
+                    <View style={styles.metricCell}>
+                      <Text style={styles.metricLabel}>Klasifikasi</Text>
+                      <Text style={styles.metricValue} numberOfLines={1}>
+                        {formatCategoryLabel(
+                          analysisData.draft.category ||
+                            analysisData.ai_analysis.primary_damage_label
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {recommendedStatus && (
+                    <View style={styles.recommendRow}>
+                      <Text style={styles.recommendLabel}>Rekomendasi Alur:</Text>
+                      <View style={[styles.recBadge, { backgroundColor: recommendedStatus.bg }]}>
+                        <Text style={[styles.recBadgeText, { color: recommendedStatus.text }]}>
+                          {recommendedStatus.label}
+                        </Text>
+                      </View>
+                      <Text style={styles.recommendNote}>
+                        {analysisData.draft.needs_manual_review
+                          ? 'Perlu tinjauan petugas'
+                          : 'Siap diteruskan'}
+                      </Text>
+                    </View>
+                  )}
+
+                  <Text style={styles.inputLabel}>Judul Laporan</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: Palette.surface }]}
+                    value={draftTitle}
+                    onChangeText={setDraftTitle}
+                  />
+
+                  <Text style={styles.inputLabel}>Deskripsi Laporan</Text>
+                  <TextInput
+                    style={[styles.input, styles.textAreaLg, { backgroundColor: Palette.surface }]}
+                    value={draftDesc}
+                    onChangeText={setDraftDesc}
+                    multiline
+                  />
+
+                  <Text style={styles.inputLabel}>Tingkat Keparahan</Text>
+                  <View style={styles.severitySelector}>
+                    {(['low', 'medium', 'high'] as const).map((sev) => {
+                      const badge = formatSeverityBadge(sev);
+                      const active = draftSeverity === sev;
+                      return (
+                        <TouchableOpacity
+                          key={sev}
+                          activeOpacity={0.85}
+                          style={[
+                            styles.sevOption,
+                            { backgroundColor: active ? badge.bg : Palette.surface },
+                            active && styles.sevOptionActive,
+                          ]}
+                          onPress={() => setDraftSeverity(sev)}>
+                          <Text
+                            style={[
+                              styles.sevOptionText,
+                              { color: active ? badge.text : Palette.ink },
+                            ]}>
+                            {badge.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* Submit */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.submitBtn, (submitting || analyzing) && styles.btnDisabled]}
+                onPress={handleSubmitReport}
+                disabled={submitting || analyzing}>
+                {submitting ? (
+                  <View style={styles.btnRow}>
+                    <ActivityIndicator size="small" color={Palette.ink} />
+                    <Text style={styles.submitBtnText}>Mengirim laporan...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.submitBtnText}>
+                    {analysisData
+                      ? 'Konfirmasi dan Kirim Laporan'
+                      : 'Kirim Laporan Tanpa Analisis'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: Palette.canvas,
+  },
+  topBarWrap: {
+    backgroundColor: Palette.surface,
+    borderBottomWidth: 2.5,
+    borderBottomColor: Palette.ink,
+    alignItems: 'center',
   },
   topBar: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF5E00',
-    paddingTop: 45,
-    paddingBottom: 15,
-    paddingHorizontal: 20,
-    borderBottomWidth: 3,
-    borderColor: '#000',
-    gap: 12,
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   backBtn: {
-    backgroundColor: '#fff',
+    backgroundColor: Palette.canvas,
     borderWidth: 2,
-    borderColor: '#000',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    borderColor: Palette.ink,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    ...BrutalShadow.sm,
   },
   backBtnText: {
-    fontWeight: '900',
     fontSize: 12,
-    color: '#000',
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  topBarCopy: {
+    flex: 1,
   },
   topBarTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#fff',
-    letterSpacing: 0.5,
-  },
-  scrollArea: {
-    padding: 18,
-  },
-  errorBanner: {
-    backgroundColor: '#FCA5A5',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 12,
-    marginBottom: 16,
-  },
-  errorText: {
-    fontWeight: '900',
-    color: '#000',
-  },
-  sectionCard: {
-    backgroundColor: '#fff',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 16,
-    marginBottom: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 5, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  sectionHeader: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 12,
+    color: Palette.ink,
   },
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  uploadFileBtn: {
-    backgroundColor: '#FFD700',
+  stepPill: {
+    backgroundColor: Palette.yellow,
     borderWidth: 2,
-    borderColor: '#000',
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 3, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    borderColor: Palette.ink,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
   },
-  uploadFileBtnText: {
-    fontWeight: '900',
-    fontSize: 13,
-    color: '#000',
-  },
-  subLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  sampleGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  sampleChip: {
-    width: '48%',
-    backgroundColor: '#E5E7EB',
-    borderWidth: 2,
-    borderColor: '#000',
-    padding: 8,
-  },
-  sampleChipSelected: {
-    backgroundColor: '#FF5E00',
-  },
-  sampleChipTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#000',
-  },
-  sampleChipSub: {
+  stepPillText: {
     fontSize: 11,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 48,
+    alignItems: 'center',
+  },
+  container: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    gap: 16,
+  },
+  authGateCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 22,
+    gap: 12,
+    marginTop: 12,
+    ...BrutalShadow.lg,
+  },
+  authGateTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.yellow,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  authGateTagText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Palette.ink,
+    letterSpacing: 0.8,
+  },
+  authGateTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: Palette.ink,
+    lineHeight: 28,
+  },
+  authGateDesc: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: Palette.inkMuted,
+  },
+  authGateActions: {
+    gap: 10,
+    marginTop: 6,
+  },
+  authPrimaryBtn: {
+    backgroundColor: Palette.accent,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    paddingVertical: 13,
+    alignItems: 'center',
+    ...BrutalShadow.md,
+  },
+  authPrimaryBtnText: {
+    color: Palette.accentText,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  authSecondaryBtn: {
+    backgroundColor: Palette.canvas,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  authSecondaryBtnText: {
+    color: Palette.ink,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  errorBanner: {
+    backgroundColor: Palette.danger,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 12,
+    gap: 2,
+  },
+  errorTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    color: Palette.ink,
+  },
+  errorText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: Palette.ink,
+  },
+  card: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 16,
+    ...BrutalShadow.md,
+  },
+  reviewCard: {
+    backgroundColor: Palette.highlight,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 14,
+  },
+  cardHeaderBetween: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 14,
+  },
+  cardHeaderLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  stepBadge: {
+    width: 30,
+    height: 30,
+    backgroundColor: Palette.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    color: Palette.yellow,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  cardHeaderCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  cardSub: {
+    fontSize: 12,
+    color: Palette.inkMuted,
+    lineHeight: 17,
+  },
+  uploadBtn: {
+    backgroundColor: Palette.yellow,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginBottom: 14,
+    ...BrutalShadow.sm,
+  },
+  uploadBtnText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  platformNotice: {
+    backgroundColor: Palette.canvas,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 12,
+    marginBottom: 14,
+  },
+  platformNoticeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.inkMuted,
+  },
+  emptyPreviewBox: {
+    width: '100%',
+    height: 150,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: Palette.ink,
+    backgroundColor: Palette.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    gap: 4,
+  },
+  emptyPreviewTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  emptyPreviewSub: {
+    fontSize: 12,
+    color: Palette.inkMuted,
+    textAlign: 'center',
+    lineHeight: 17,
+  },
+  previewWrap: {
+    gap: 8,
   },
   previewBox: {
     width: '100%',
     height: 220,
-    borderWidth: 3,
-    borderColor: '#000',
-    backgroundColor: '#000',
-    position: 'relative',
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    backgroundColor: Palette.ink,
     overflow: 'hidden',
   },
   previewImage: {
     width: '100%',
     height: '100%',
   },
-  bbox: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: '#FF5E00',
-    backgroundColor: 'rgba(255, 94, 0, 0.22)',
-  },
-  bboxTag: {
-    backgroundColor: '#FF5E00',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    alignSelf: 'flex-start',
-  },
-  bboxTagText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '900',
+  previewHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Palette.inkMuted,
   },
   gpsBtn: {
-    backgroundColor: '#C1FF72',
+    backgroundColor: Palette.success,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   gpsBtnText: {
     fontSize: 11,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.ink,
   },
   inputLabel: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#000',
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
     marginBottom: 5,
   },
   input: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: Palette.surfaceAlt,
     borderWidth: 2,
-    borderColor: '#000',
-    padding: 10,
+    borderColor: Palette.ink,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
     fontSize: 14,
-    color: '#000',
+    color: Palette.ink,
+    fontWeight: '600',
     marginBottom: 12,
+  },
+  textArea: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  textAreaLg: {
+    minHeight: 94,
+    textAlignVertical: 'top',
   },
   coordRow: {
     flexDirection: 'row',
     gap: 10,
   },
+  coordCol: {
+    flex: 1,
+  },
   analyzeBtn: {
-    backgroundColor: '#FF5E00',
-    borderWidth: 3,
-    borderColor: '#000',
-    paddingVertical: 14,
+    backgroundColor: Palette.accent,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     alignItems: 'center',
     marginTop: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    ...BrutalShadow.md,
   },
   analyzeBtnText: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#fff',
+    color: Palette.accentText,
   },
   btnRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  aiMetricsBox: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#000',
-    padding: 10,
+  btnDisabled: {
+    opacity: 0.7,
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 12,
   },
-  metricLine: {
+  metricCell: {
+    width: '48.5%',
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 10,
+    gap: 2,
+  },
+  metricLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  metricValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  recommendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 10,
+    marginBottom: 14,
+  },
+  recommendLabel: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#000',
-    marginBottom: 4,
+    color: Palette.ink,
+  },
+  recBadge: {
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  recBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  recommendNote: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Palette.inkMuted,
   },
   severitySelector: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 4,
+    marginTop: 2,
   },
   sevOption: {
     flex: 1,
     borderWidth: 2,
-    borderColor: '#000',
-    paddingVertical: 8,
+    borderColor: Palette.ink,
+    paddingVertical: 10,
     alignItems: 'center',
+  },
+  sevOptionActive: {
+    ...BrutalShadow.sm,
   },
   sevOptionText: {
     fontSize: 12,
     fontWeight: '900',
   },
   submitBtn: {
-    backgroundColor: '#C1FF72',
-    borderWidth: 3,
-    borderColor: '#000',
-    paddingVertical: 16,
+    backgroundColor: Palette.success,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    paddingVertical: 15,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 5, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    ...BrutalShadow.lg,
   },
   submitBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.ink,
   },
 });
-

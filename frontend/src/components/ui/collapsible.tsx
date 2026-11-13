@@ -1,65 +1,118 @@
-import { SymbolView } from 'expo-symbols';
 import { PropsWithChildren, useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { BrutalShadow, Palette, Spacing } from '@/constants/theme';
 
-export function Collapsible({ children, title }: PropsWithChildren & { title: string }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const theme = useTheme();
+export function Collapsible({
+  children,
+  title,
+  tag,
+  defaultOpen = false,
+}: PropsWithChildren & { title: string; tag?: string; defaultOpen?: boolean }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <ThemedView>
+    <View style={styles.card}>
       <Pressable
         style={({ pressed }) => [styles.heading, pressed && styles.pressedHeading]}
         onPress={() => setIsOpen((value) => !value)}>
-        <ThemedView type="backgroundElement" style={styles.button}>
-          <SymbolView
-            name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
-            size={14}
-            weight="bold"
-            tintColor={theme.text}
-            style={{ transform: [{ rotate: isOpen ? '-90deg' : '90deg' }] }}
-          />
-        </ThemedView>
+        <View style={styles.headingLeft}>
+          {tag ? (
+            <View style={styles.tagBadge}>
+              <Text style={styles.tagText}>{tag}</Text>
+            </View>
+          ) : null}
+          <Text style={styles.titleText}>{title}</Text>
+        </View>
 
-        <ThemedText type="small">{title}</ThemedText>
+        <View style={[styles.toggleBox, isOpen && styles.toggleBoxActive]}>
+          <Text style={[styles.toggleText, isOpen && styles.toggleTextActive]}>
+            {isOpen ? '-' : '+'}
+          </Text>
+        </View>
       </Pressable>
+
       {isOpen && (
-        <Animated.View entering={FadeIn.duration(200)}>
-          <ThemedView type="backgroundElement" style={styles.content}>
-            {children}
-          </ThemedView>
+        <Animated.View entering={FadeIn.duration(160)} style={styles.content}>
+          {children}
         </Animated.View>
       )}
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  card: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    borderRadius: 0,
+    ...BrutalShadow.sm,
+  },
   heading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 12,
+    backgroundColor: Palette.surface,
+  },
+  pressedHeading: {
+    backgroundColor: Palette.highlight,
+  },
+  headingLeft: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
   },
-  pressedHeading: {
-    opacity: 0.7,
+  tagBadge: {
+    backgroundColor: Palette.yellow,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  button: {
-    width: Spacing.four,
-    height: Spacing.four,
-    borderRadius: 12,
-    justifyContent: 'center',
+  tagText: {
+    color: Palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  titleText: {
+    flex: 1,
+    color: Palette.ink,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  toggleBox: {
+    width: 26,
+    height: 26,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    backgroundColor: Palette.canvas,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleBoxActive: {
+    backgroundColor: Palette.accent,
+  },
+  toggleText: {
+    color: Palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 17,
+  },
+  toggleTextActive: {
+    color: Palette.accentText,
   },
   content: {
-    marginTop: Spacing.three,
-    borderRadius: Spacing.three,
-    marginLeft: Spacing.four,
-    padding: Spacing.four,
+    borderTopWidth: 2,
+    borderTopColor: Palette.ink,
+    backgroundColor: Palette.highlight,
+    padding: Spacing.three,
+    gap: Spacing.two,
   },
 });

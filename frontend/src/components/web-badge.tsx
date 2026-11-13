@@ -1,43 +1,49 @@
-import { version } from 'expo/package.json';
-import { Image } from 'expo-image';
-import { useColorScheme, StyleSheet } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from './themed-text';
-import { ThemedView } from './themed-view';
-
-import { Spacing } from '@/constants/theme';
+import { BrutalShadow, Palette, Spacing } from '@/constants/theme';
 
 export function WebBadge() {
-  const scheme = useColorScheme();
-
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="code" themeColor="textSecondary" style={styles.versionText}>
-        v{version}
-      </ThemedText>
-      <Image
-        source={
-          scheme === 'dark'
-            ? require('@/assets/images/expo-badge-white.png')
-            : require('@/assets/images/expo-badge.png')
-        }
-        style={styles.badgeImage}
-      />
-    </ThemedView>
+    <View style={styles.container}>
+      <View style={styles.badge}>
+        <Text style={styles.brandText}>UrusJakarta</Text>
+        <View style={styles.divider} />
+        <Text style={styles.tagText}>Portal Pelaporan Warga DKI</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    padding: Spacing.five,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  badge: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    borderRadius: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    ...BrutalShadow.sm,
   },
-  versionText: {
-    textAlign: 'center',
+  brandText: {
+    color: Palette.accent,
+    fontSize: 12,
+    fontWeight: '900',
   },
-  badgeImage: {
-    width: 123,
-    aspectRatio: 123 / 24,
+  divider: {
+    width: 1.5,
+    height: 12,
+    backgroundColor: Palette.ink,
+  },
+  tagText: {
+    color: Palette.ink,
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

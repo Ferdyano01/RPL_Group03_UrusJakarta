@@ -82,17 +82,6 @@ export interface ReportItem {
   }[];
 }
 
-export interface SampleImageItem {
-  id: string;
-  filename: string;
-  label: string;
-  image_url: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  description: string;
-}
-
 export interface DraftAnalysisResponse {
   draft: {
     title: string;
@@ -295,11 +284,6 @@ export const checkSystemHealth = async () => {
   }
 };
 
-export const getSampleImages = async (): Promise<SampleImageItem[]> => {
-  const res = await apiRequest<{ status: string; data: SampleImageItem[] }>('/api/samples');
-  return res.data || [];
-};
-
 export const registerUserApi = async (payload: {
   full_name: string;
   email: string;
@@ -328,27 +312,6 @@ export const loginUserApi = async (payload: { email: string; password: string })
   return res.data;
 };
 
-export const loginOrRegisterDemoUser = async () => {
-  const demoCredentials = {
-    email: 'warga@jakarta.id',
-    password: 'Password123!',
-    full_name: 'Budi Warga Jakarta',
-    phone_number: '081234567890',
-  };
-  try {
-    return await loginUserApi({
-      email: demoCredentials.email,
-      password: demoCredentials.password,
-    });
-  } catch {
-    await registerUserApi(demoCredentials);
-    return await loginUserApi({
-      email: demoCredentials.email,
-      password: demoCredentials.password,
-    });
-  }
-};
-
 export const fetchMyProfile = async (): Promise<UserProfile> => {
   const res = await apiRequest<{ status: string; data: UserProfile }>('/api/auth/me');
   updateStoredUser(res.data);
@@ -369,7 +332,6 @@ export const updateMyProfile = async (payload: {
 
 export const analyzeReportDraftApi = async (params: {
   webFile?: File | null;
-  sampleImage?: string | null;
   latitude: number | string;
   longitude: number | string;
   address?: string;
@@ -379,8 +341,6 @@ export const analyzeReportDraftApi = async (params: {
   const formData = new FormData();
   if (params.webFile) {
     formData.append('image', params.webFile, params.webFile.name);
-  } else if (params.sampleImage) {
-    formData.append('sample_image', params.sampleImage);
   }
   formData.append('latitude', String(params.latitude));
   formData.append('longitude', String(params.longitude));
@@ -412,7 +372,6 @@ export const createReportApi = async (params: {
   ai_analysis?: AiAnalysisMetadata | null;
   status?: string;
   webFile?: File | null;
-  sampleImage?: string | null;
 }): Promise<ReportItem> => {
   if (params.webFile) {
     const formData = new FormData();
@@ -450,7 +409,6 @@ export const createReportApi = async (params: {
       image_url: params.image_url,
       ai_analysis: params.ai_analysis,
       status: params.status,
-      ...(params.sampleImage ? { sample_image: params.sampleImage } : {}),
     }),
   });
   return res.data;
@@ -531,35 +489,35 @@ export const deleteReportApi = async (id: string) => {
 export const formatStatusBadge = (status: string) => {
   const s = (status || 'submitted').toLowerCase();
   if (['routed', 'in_progress'].includes(s)) {
-    return { label: 'PROSES', rawLabel: s.toUpperCase(), bg: '#FFD700', text: '#000' };
+    return { label: 'Diproses', rawLabel: s.toUpperCase(), bg: '#FDE047', text: '#111827' };
   }
   if (['fixed', 'closed'].includes(s)) {
-    return { label: 'SELESAI', rawLabel: s.toUpperCase(), bg: '#32CD32', text: '#000' };
+    return { label: 'Selesai', rawLabel: s.toUpperCase(), bg: '#86EFAC', text: '#111827' };
   }
   if (s === 'rejected') {
-    return { label: 'DITOLAK', rawLabel: 'REJECTED', bg: '#FF4D4D', text: '#fff' };
+    return { label: 'Ditolak', rawLabel: 'REJECTED', bg: '#FCA5A5', text: '#111827' };
   }
   if (s === 'pending_review') {
-    return { label: 'MENUNGGU REVIEW', rawLabel: 'PENDING REVIEW', bg: '#FCA5A5', text: '#000' };
+    return { label: 'Perlu Tinjauan', rawLabel: 'PENDING REVIEW', bg: '#FDBA74', text: '#111827' };
   }
-  return { label: 'MENUNGGU', rawLabel: s.toUpperCase(), bg: '#FFFFFF', text: '#000' };
+  return { label: 'Menunggu', rawLabel: s.toUpperCase(), bg: '#FFFFFF', text: '#111827' };
 };
 
 export const formatSeverityBadge = (severity?: string) => {
   const sev = (severity || 'medium').toLowerCase();
   if (sev === 'high') {
-    return { label: 'PARAH (HIGH)', bg: '#FF5E00', text: '#fff' };
+    return { label: 'Parah', bg: '#FF5E00', text: '#FFFFFF' };
   }
   if (sev === 'low') {
-    return { label: 'RINGAN (LOW)', bg: '#C1FF72', text: '#000' };
+    return { label: 'Ringan', bg: '#D9F99D', text: '#111827' };
   }
-  return { label: 'SEDANG (MEDIUM)', bg: '#FFD700', text: '#000' };
+  return { label: 'Sedang', bg: '#FDE047', text: '#111827' };
 };
 
 export const formatCategoryLabel = (category?: string) => {
   const map: Record<string, string> = {
-    pothole: 'Lubang Jalan (Pothole)',
-    crack: 'Retak Jalan (Crack)',
+    pothole: 'Lubang Jalan',
+    crack: 'Retak Permukaan Jalan',
     surface_damage: 'Pengelupasan Aspal',
     sidewalk_damage: 'Kerusakan Trotoar',
     undamaged: 'Kondisi Jalan Normal',

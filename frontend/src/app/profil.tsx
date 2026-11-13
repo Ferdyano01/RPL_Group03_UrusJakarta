@@ -1,36 +1,51 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ScrollView,
   StyleSheet,
   Text,
-  View,
-  TouchableOpacity,
   TextInput,
-  ScrollView,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+
+import { BottomNav } from '@/components/bottom-nav';
+import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
   UserProfile,
-  getCurrentUser,
-  fetchMyProfile,
-  updateMyProfile,
-  clearAuthSession,
-  getApiBaseUrl,
-  setApiBaseUrl,
   checkSystemHealth,
+  clearAuthSession,
+  fetchMyProfile,
+  getApiBaseUrl,
+  getAuthToken,
+  getCurrentUser,
+  setApiBaseUrl,
+  updateMyProfile,
 } from '@/services/api';
+
+function getInitials(name?: string): string {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'UJ';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
 
 export default function Profil() {
   const [user, setUser] = useState<UserProfile | null>(getCurrentUser());
+  const isAuthenticated = Boolean(getAuthToken() && user);
+
   const [editingProfile, setEditingProfile] = useState(false);
-  const [fullName, setFullName] = useState(user?.full_name || 'Budi Warga Jakarta');
+  const [fullName, setFullName] = useState(user?.full_name || '');
   const [phoneNumber, setPhoneNumber] = useState(user?.phone_number || '');
 
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [apiUrlInput, setApiUrlInput] = useState(getApiBaseUrl());
   const [showContactInfo, setShowContactInfo] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
+    if (!getAuthToken()) return;
     fetchMyProfile()
       .then((profile) => {
         setUser(profile);
@@ -38,12 +53,12 @@ export default function Profil() {
         setPhoneNumber(profile.phone_number || '');
       })
       .catch(() => {
-        // Gunakan profil tersimpan jika belum login
+        // Sesi tidak valid atau offline
       });
   }, []);
 
   const handleSaveProfile = async () => {
-    setStatusMessage(null);
+    setFeedback(null);
     try {
       const updated = await updateMyProfile({
         full_name: fullName,
@@ -51,9 +66,9 @@ export default function Profil() {
       });
       setUser(updated);
       setEditingProfile(false);
-      setStatusMessage('✅ Profil berhasil diperbarui!');
+      setFeedback({ type: 'ok', text: 'Data profil Anda berhasil diperbarui.' });
     } catch (err: any) {
-      setStatusMessage(`⚠️ ${err.message || 'Gagal memperbarui profil.'}`);
+      setFeedback({ type: 'err', text: err.message || 'Gagal memperbarui profil.' });
     }
   };
 
@@ -61,303 +76,520 @@ export default function Profil() {
     setApiBaseUrl(apiUrlInput);
     const health = await checkSystemHealth();
     setShowServerConfig(false);
-    setStatusMessage(
-      health.backendOnline
-        ? `✅ Terhubung ke Backend (${getApiBaseUrl()}) | Road-AI: ${
-            health.aiOnline ? 'ONLINE' : 'FALLBACK'
-          }`
-        : `⚠️ Tidak dapat menghubungi server di ${getApiBaseUrl()}`
-    );
+    if (health.backendOnline) {
+      setFeedback({
+        type: 'ok',
+        text: `Terhubung ke server (${getApiBaseUrl()}). Layanan deteksi foto ${
+          health.aiOnline ? 'aktif' : 'dalam mode siaga'
+        }.`,
+      });
+    } else {
+      setFeedback({
+        type: 'err',
+        text: `Tidak dapat menghubungi server di ${getApiBaseUrl()}.`,
+      });
+    }
   };
 
   const handleLogout = () => {
     clearAuthSession();
-    router.replace('/signup');
+    router.replace('/signup?mode=login' as any);
   };
 
+  const roleLabel =
+    (user?.role || 'citizen').toLowerCase() === 'citizen'
+      ? 'Warga Pelapor'
+      : (user?.role || 'Petugas').toUpperCase();
+
   return (
-    <View style={styles.container}>
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <Text style={styles.header}>PROFIL</Text>
-
-        {/* Bagian Info Profil */}
-        <View style={styles.profileInfoContainer}>
-          <View style={styles.avatarBox}>
-            <Text style={styles.avatarIcon}>👤</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.eyebrow}>AKUN & PREFERENSI</Text>
+              <Text style={styles.headerTitle}>Profil Pengguna</Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.guideBtn}
+              onPress={() => router.push('/explore')}>
+              <Text style={styles.guideBtnText}>Panduan Sistem</Text>
+            </TouchableOpacity>
           </View>
-          <View style={styles.profileText}>
-            <Text style={styles.nameText}>{user?.full_name || 'Warga Jakarta'}</Text>
-            <Text style={styles.emailText}>{user?.email || 'warga@jakarta.id'}</Text>
-            {user?.phone_number ? (
-              <Text style={styles.phoneText}>📞 {user.phone_number}</Text>
-            ) : null}
-            <View style={styles.roleBadge}>
-              <Text style={styles.roleBadgeText}>
-                PERAN: {(user?.role || 'citizen').toUpperCase()}
+
+          {/* Profile Card vs Guest Card */}
+          {isAuthenticated && user ? (
+            <View style={styles.profileCard}>
+              <View style={styles.avatarBox}>
+                <Text style={styles.avatarInitials}>{getInitials(user.full_name)}</Text>
+              </View>
+              <View style={styles.profileInfo}>
+                <Text style={styles.nameText}>{user.full_name}</Text>
+                <Text style={styles.metaText}>{user.email}</Text>
+                {user.phone_number ? (
+                  <Text style={styles.metaText}>Telp: {user.phone_number}</Text>
+                ) : null}
+                <View style={styles.roleBadge}>
+                  <Text style={styles.roleBadgeText}>{roleLabel}</Text>
+                </View>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.guestCard}>
+              <Text style={styles.guestTitle}>Belum Masuk Akun</Text>
+              <Text style={styles.guestDesc}>
+                Daftar atau masuk menggunakan akun Anda untuk mengelola profil dan mengirim laporan
+                kerusakan jalan.
               </Text>
+              <View style={styles.btnRow}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.panelBtn, { backgroundColor: Palette.accent }]}
+                  onPress={() => router.push('/signup?mode=signup' as any)}>
+                  <Text style={[styles.panelBtnText, { color: Palette.accentText }]}>
+                    Daftar Baru
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.panelBtn, { backgroundColor: Palette.surface }]}
+                  onPress={() => router.push('/signup?mode=login' as any)}>
+                  <Text style={styles.panelBtnText}>Masuk</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {feedback && (
+            <View
+              style={[
+                styles.feedbackBanner,
+                {
+                  backgroundColor:
+                    feedback.type === 'ok' ? Palette.success : Palette.danger,
+                },
+              ]}>
+              <Text style={styles.feedbackTitle}>
+                {feedback.type === 'ok' ? 'Berhasil' : 'Perhatian'}
+              </Text>
+              <Text style={styles.feedbackText}>{feedback.text}</Text>
+            </View>
+          )}
+
+          {/* Action Menu Stack */}
+          <View style={styles.menuStack}>
+            {isAuthenticated && (
+              <View style={styles.accordionCard}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.menuHeader}
+                  onPress={() => setEditingProfile((v) => !v)}>
+                  <View style={styles.menuCopy}>
+                    <Text style={styles.menuTitle}>Ubah Data Profil</Text>
+                    <Text style={styles.menuSub}>Perbarui nama lengkap dan nomor telepon</Text>
+                  </View>
+                  <View style={[styles.stateChip, editingProfile && styles.stateChipActive]}>
+                    <Text
+                      style={[styles.stateChipText, editingProfile && styles.stateChipTextActive]}>
+                      {editingProfile ? 'Tutup' : 'Edit'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {editingProfile && (
+                  <View style={styles.panelBody}>
+                    <Text style={styles.inputLabel}>Nama Lengkap</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={fullName}
+                      onChangeText={setFullName}
+                      placeholder="Nama Lengkap"
+                      placeholderTextColor={Palette.inkSubtle}
+                    />
+                    <Text style={styles.inputLabel}>Nomor Telepon</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={phoneNumber}
+                      onChangeText={setPhoneNumber}
+                      placeholder="08xxxxxxxxxx"
+                      placeholderTextColor={Palette.inkSubtle}
+                      keyboardType="phone-pad"
+                    />
+                    <View style={styles.btnRow}>
+                      <TouchableOpacity
+                        style={[styles.panelBtn, { backgroundColor: Palette.success }]}
+                        onPress={handleSaveProfile}>
+                        <Text style={styles.panelBtnText}>Simpan Perubahan</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.panelBtn, { backgroundColor: Palette.surface }]}
+                        onPress={() => setEditingProfile(false)}>
+                        <Text style={styles.panelBtnText}>Batal</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Server API */}
+            <View style={styles.accordionCard}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.menuHeader}
+                onPress={() => setShowServerConfig((v) => !v)}>
+                <View style={styles.menuCopy}>
+                  <Text style={styles.menuTitle}>Koneksi Server API</Text>
+                  <Text style={styles.menuSub} numberOfLines={1}>
+                    Aktif: {getApiBaseUrl()}
+                  </Text>
+                </View>
+                <View style={[styles.stateChip, showServerConfig && styles.stateChipActive]}>
+                  <Text
+                    style={[
+                      styles.stateChipText,
+                      showServerConfig && styles.stateChipTextActive,
+                    ]}>
+                    {showServerConfig ? 'Tutup' : 'Atur'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {showServerConfig && (
+                <View style={styles.panelBody}>
+                  <Text style={styles.inputLabel}>Alamat URL Server Backend</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={apiUrlInput}
+                    onChangeText={setApiUrlInput}
+                    autoCapitalize="none"
+                    placeholder="http://localhost:5000"
+                    placeholderTextColor={Palette.inkSubtle}
+                  />
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity
+                      style={[styles.panelBtn, { backgroundColor: Palette.yellow }]}
+                      onPress={handleSaveApiUrl}>
+                      <Text style={styles.panelBtnText}>Uji dan Simpan</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.panelBtn, { backgroundColor: Palette.surface }]}
+                      onPress={() => setShowServerConfig(false)}>
+                      <Text style={styles.panelBtnText}>Batal</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Info Dinas & Kontak */}
+            <View style={styles.accordionCard}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.menuHeader}
+                onPress={() => setShowContactInfo((v) => !v)}>
+                <View style={styles.menuCopy}>
+                  <Text style={styles.menuTitle}>Informasi Layanan & Instansi</Text>
+                  <Text style={styles.menuSub}>Kontak resmi Dinas Bina Marga DKI Jakarta</Text>
+                </View>
+                <View style={[styles.stateChip, showContactInfo && styles.stateChipActive]}>
+                  <Text
+                    style={[
+                      styles.stateChipText,
+                      showContactInfo && styles.stateChipTextActive,
+                    ]}>
+                    {showContactInfo ? 'Tutup' : 'Lihat'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {showContactInfo && (
+                <View style={styles.panelBody}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoKey}>Instansi Tujuan</Text>
+                    <Text style={styles.infoVal}>Dinas Bina Marga Provinsi DKI Jakarta</Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoKey}>Email Resmi</Text>
+                    <Text style={styles.infoVal}>binamarga@jakarta.go.id</Text>
+                  </View>
+                  <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+                    <Text style={styles.infoKey}>Tim Pengembang</Text>
+                    <Text style={styles.infoVal}>Kelompok 03 RPL — FT Universitas Indonesia</Text>
+                  </View>
+                </View>
+              )}
             </View>
           </View>
+
+          {isAuthenticated && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.logoutBtn}
+              onPress={handleLogout}>
+              <Text style={styles.logoutBtnText}>Keluar dari Akun</Text>
+            </TouchableOpacity>
+          )}
         </View>
-
-        {statusMessage && (
-          <View style={styles.statusBanner}>
-            <Text style={styles.statusBannerText}>{statusMessage}</Text>
-          </View>
-        )}
-
-        {/* Form Ubah Profil */}
-        {editingProfile && (
-          <View style={styles.panelBox}>
-            <Text style={styles.panelTitle}>UBAH PROFIL WARGA</Text>
-            <Text style={styles.inputLabel}>Nama Lengkap</Text>
-            <TextInput
-              style={styles.input}
-              value={fullName}
-              onChangeText={setFullName}
-              placeholder="Nama Lengkap"
-            />
-            <Text style={styles.inputLabel}>Nomor Telepon</Text>
-            <TextInput
-              style={styles.input}
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
-              placeholder="0812xxxxxxxx"
-              keyboardType="phone-pad"
-            />
-            <View style={styles.panelBtnRow}>
-              <TouchableOpacity
-                style={[styles.smallBtn, { backgroundColor: '#C1FF72' }]}
-                onPress={handleSaveProfile}>
-                <Text style={styles.smallBtnText}>SIMPAN</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.smallBtn, { backgroundColor: '#fff' }]}
-                onPress={() => setEditingProfile(false)}>
-                <Text style={styles.smallBtnText}>BATAL</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Form Konfigurasi URL Server Lokal */}
-        {showServerConfig && (
-          <View style={styles.panelBox}>
-            <Text style={styles.panelTitle}>KONFIGURASI URL BACKEND API</Text>
-            <Text style={styles.inputLabel}>Alamat URL Server Backend</Text>
-            <TextInput
-              style={styles.input}
-              value={apiUrlInput}
-              onChangeText={setApiUrlInput}
-              autoCapitalize="none"
-              placeholder="http://localhost:5000"
-            />
-            <View style={styles.panelBtnRow}>
-              <TouchableOpacity
-                style={[styles.smallBtn, { backgroundColor: '#FFD700' }]}
-                onPress={handleSaveApiUrl}>
-                <Text style={styles.smallBtnText}>UJI & SIMPAN URL</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.smallBtn, { backgroundColor: '#fff' }]}
-                onPress={() => setShowServerConfig(false)}>
-                <Text style={styles.smallBtnText}>TUTUP</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Panel Hubungi Kami */}
-        {showContactInfo && (
-          <View style={styles.panelBox}>
-            <Text style={styles.panelTitle}>LAYANAN PENGADUAN URUSJAKARTA</Text>
-            <Text style={styles.contactText}>
-              • Instansi Tujuan: Dinas Bina Marga Provinsi DKI Jakarta
-            </Text>
-            <Text style={styles.contactText}>
-              • Email Resmi: binamarga@jakarta.go.id
-            </Text>
-            <Text style={styles.contactText}>
-              • Pengembang: Kelompok 03 RPL — FT Universitas Indonesia
-            </Text>
-          </View>
-        )}
-
-        {/* Tombol-tombol Menu Profil */}
-        <View style={styles.menuContainer}>
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={() => setEditingProfile(!editingProfile)}>
-            <Text style={styles.menuButtonText}>📝 UBAH PROFIL</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={() => setShowServerConfig(!showServerConfig)}>
-            <Text style={styles.menuButtonText}>⚙️ PENGATURAN SERVER API</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={() => setShowContactInfo(!showContactInfo)}>
-            <Text style={styles.menuButtonText}>💬 HUBUNGI KAMI</Text>
-          </TouchableOpacity>
-
-          {/* Tombol Keluar (kembali ke Sign Up) */}
-          <TouchableOpacity
-            style={[styles.menuButton, { backgroundColor: '#FF5E00' }]}
-            onPress={handleLogout}>
-            <Text style={[styles.menuButtonText, { color: '#fff' }]}>
-              ← KELUAR
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Menu Navigasi Bawah */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => router.push('/beranda')}>
-          <Text style={styles.navText}>Beranda</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => router.push('/riwayat')}>
-          <Text style={styles.navText}>Riwayat</Text>
-        </TouchableOpacity>
-
-        {/* Tombol Profil Aktif */}
-        <TouchableOpacity style={[styles.navItem, styles.navActive]}>
-          <Text style={styles.navTextActive}>Profil</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      <BottomNav active="profil" />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  scrollArea: { paddingHorizontal: 25, paddingTop: 45 },
-  header: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: '#000',
-    marginBottom: 30,
-    textAlign: 'center',
+  safeArea: {
+    flex: 1,
+    backgroundColor: Palette.canvas,
   },
-  profileInfoContainer: {
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 92,
+    alignItems: 'center',
+  },
+  container: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    gap: 16,
+  },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 25,
-    backgroundColor: '#fff',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 5, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Palette.accent,
+    letterSpacing: 0.8,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  guideBtn: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...BrutalShadow.sm,
+  },
+  guideBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  profileCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    ...BrutalShadow.lg,
   },
   avatarBox: {
-    width: 75,
-    height: 75,
-    backgroundColor: '#FADCB6',
-    borderWidth: 3,
-    borderColor: '#000',
-    justifyContent: 'center',
+    width: 68,
+    height: 68,
+    backgroundColor: Palette.accent,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
     alignItems: 'center',
-    marginRight: 16,
+    justifyContent: 'center',
   },
-  avatarIcon: { fontSize: 36 },
-  profileText: { flex: 1 },
-  nameText: { fontSize: 18, fontWeight: '900', color: '#000', marginBottom: 3 },
-  emailText: { fontSize: 13, fontWeight: 'bold', color: '#4B5563', marginBottom: 2 },
-  phoneText: { fontSize: 12, fontWeight: 'bold', color: '#1F2937', marginBottom: 6 },
+  avatarInitials: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: Palette.accentText,
+    letterSpacing: 1,
+  },
+  profileInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  nameText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  metaText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Palette.inkMuted,
+  },
   roleBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#C1FF72',
-    borderWidth: 2,
-    borderColor: '#000',
+    marginTop: 4,
+    backgroundColor: Palette.yellow,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  roleBadgeText: { fontSize: 10, fontWeight: '900', color: '#000' },
-  statusBanner: {
-    backgroundColor: '#FEF3C7',
+  roleBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  guestCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 18,
+    gap: 10,
+    ...BrutalShadow.lg,
+  },
+  guestTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  guestDesc: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: Palette.inkMuted,
+  },
+  feedbackBanner: {
     borderWidth: 2,
-    borderColor: '#000',
-    padding: 10,
-    marginBottom: 16,
+    borderColor: Palette.ink,
+    padding: 12,
+    gap: 2,
   },
-  statusBannerText: { fontWeight: '900', fontSize: 12, color: '#000' },
-  panelBox: {
-    backgroundColor: '#fff',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 15,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+  feedbackTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    color: Palette.ink,
   },
-  panelTitle: { fontSize: 14, fontWeight: '900', color: '#000', marginBottom: 10 },
-  inputLabel: { fontSize: 12, fontWeight: '900', color: '#000', marginBottom: 4 },
+  feedbackText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.ink,
+  },
+  menuStack: {
+    gap: 12,
+  },
+  accordionCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    ...BrutalShadow.md,
+  },
+  menuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 14,
+  },
+  menuCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  menuTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  menuSub: {
+    fontSize: 12,
+    color: Palette.inkMuted,
+    fontWeight: '500',
+  },
+  stateChip: {
+    backgroundColor: Palette.canvas,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  stateChipActive: {
+    backgroundColor: Palette.ink,
+  },
+  stateChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  stateChipTextActive: {
+    color: Palette.surface,
+  },
+  panelBody: {
+    borderTopWidth: 2,
+    borderTopColor: Palette.ink,
+    backgroundColor: Palette.highlight,
+    padding: 14,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
+    marginBottom: 5,
+  },
   input: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: Palette.surface,
     borderWidth: 2,
-    borderColor: '#000',
-    padding: 10,
+    borderColor: Palette.ink,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
     fontSize: 14,
-    color: '#000',
-    marginBottom: 10,
+    color: Palette.ink,
+    fontWeight: '600',
+    marginBottom: 12,
   },
-  panelBtnRow: { flexDirection: 'row', gap: 10 },
-  smallBtn: {
+  btnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  panelBtn: {
     flex: 1,
     borderWidth: 2,
-    borderColor: '#000',
+    borderColor: Palette.ink,
     paddingVertical: 10,
     alignItems: 'center',
+    ...BrutalShadow.sm,
   },
-  smallBtnText: { fontWeight: '900', fontSize: 12, color: '#000' },
-  contactText: { fontSize: 13, fontWeight: '700', color: '#000', marginBottom: 4 },
-  menuContainer: { marginTop: 5 },
-  menuButton: {
-    backgroundColor: '#E5E7EB',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 15,
-    marginBottom: 16,
+  panelBtnText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  infoRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    gap: 2,
+  },
+  infoKey: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+  },
+  infoVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.ink,
+  },
+  logoutBtn: {
+    backgroundColor: Palette.danger,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 13,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
+    marginTop: 4,
+    ...BrutalShadow.md,
   },
-  menuButtonText: { fontSize: 15, fontWeight: '900', color: '#000' },
-  bottomNav: {
-    flexDirection: 'row',
-    borderTopWidth: 3,
-    borderColor: '#000',
-    backgroundColor: '#F3F4F6',
-    height: 70,
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+  logoutBtnText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: Palette.ink,
   },
-  navItem: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRightWidth: 1,
-    borderColor: '#000',
-  },
-  navActive: { backgroundColor: '#FF5E00' },
-  navText: { fontWeight: '900', color: '#000' },
-  navTextActive: { fontWeight: '900', color: '#fff' },
 });

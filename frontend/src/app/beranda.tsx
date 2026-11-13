@@ -1,25 +1,29 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
   StyleSheet,
   Text,
-  View,
   TouchableOpacity,
-  ScrollView,
-  Image,
-  ActivityIndicator,
+  View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+
+import { BottomNav } from '@/components/bottom-nav';
+import { ReportDetailModal } from '@/components/report-detail-modal';
+import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
   ReportItem,
-  getCurrentUser,
   checkSystemHealth,
   fetchAllReportsApi,
-  resolveImageUrl,
-  formatStatusBadge,
-  formatSeverityBadge,
   formatDateID,
+  formatSeverityBadge,
+  formatStatusBadge,
+  getCurrentUser,
+  resolveImageUrl,
 } from '@/services/api';
-import { ReportDetailModal } from '@/components/report-detail-modal';
 
 export default function Beranda() {
   const user = getCurrentUser();
@@ -63,146 +67,222 @@ export default function Beranda() {
   ).length;
 
   const firstName = user?.full_name
-    ? user.full_name.split(' ')[0].toUpperCase()
-    : 'WARGA';
+    ? user.full_name.trim().split(' ')[0]
+    : null;
 
   return (
-    <View style={styles.container}>
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <Text style={styles.header}>HALO, {firstName}!</Text>
-          <TouchableOpacity style={styles.refreshBtn} onPress={loadData}>
-            <Text style={styles.refreshBtnText}>↻ REFRESH</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Status Integrasi Sistem */}
-        {health && (
-          <View style={styles.statusBannerRow}>
-            <View
-              style={[
-                styles.statusTag,
-                { backgroundColor: health.backendOnline ? '#C1FF72' : '#FCA5A5' },
-              ]}>
-              <Text style={styles.statusTagText}>
-                API: {health.backendOnline ? 'ONLINE' : 'OFFLINE'}
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.headerCard}>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.eyebrow}>PORTAL PENGADUAN DKI JAKARTA</Text>
+              <Text style={styles.greeting}>
+                {firstName ? `Halo, ${firstName}` : 'Selamat Datang'}
               </Text>
             </View>
-            <View
-              style={[
-                styles.statusTag,
-                { backgroundColor: health.aiOnline ? '#C1FF72' : '#FFD700' },
-              ]}>
-              <Text style={styles.statusTagText}>
-                YOLO AI: {health.aiOnline ? 'ACTIVE' : 'FALLBACK'}
-              </Text>
+            <View style={styles.headerActions}>
+              {!user && (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.headerBtn, styles.headerBtnAuth]}
+                  onPress={() => router.push('/signup?mode=signup' as any)}>
+                  <Text style={styles.headerBtnAuthText}>Daftar / Masuk</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.headerBtn}
+                onPress={() => router.push('/explore')}>
+                <Text style={styles.headerBtnText}>Panduan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.headerBtn, styles.headerBtnAccent]}
+                onPress={loadData}>
+                <Text style={styles.headerBtnText}>Muat Ulang</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        )}
 
-        {/* Tombol Lapor Jalan Rusak */}
-        <TouchableOpacity
-          style={styles.reportButton}
-          onPress={() => router.push('/lapor' as any)}>
-          <Text style={styles.reportButtonText}>+ Lapor Jalan rusak (Analisis AI)</Text>
-        </TouchableOpacity>
-
-        {/* Statistik Dinamis */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statBox, { backgroundColor: '#fff' }]}>
-            <Text style={styles.statText}>Laporan: {totalCount}</Text>
-          </View>
-          <View style={[styles.statBox, { backgroundColor: '#FFD700' }]}>
-            <Text style={styles.statText}>Proses: {inProgressCount}</Text>
-          </View>
-          <View style={[styles.statBox, { backgroundColor: '#C1FF72' }]}>
-            <Text style={styles.statText}>Selesai: {fixedCount}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.sectionTitle}>Laporan Terkini</Text>
-
-        {loading && (
-          <View style={styles.centerBox}>
-            <ActivityIndicator size="large" color="#000" />
-            <Text style={styles.loadingText}>Memuat laporan warga...</Text>
-          </View>
-        )}
-
-        {errorMsg && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
-          </View>
-        )}
-
-        {!loading && reports.length === 0 && !errorMsg && (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>
-              Belum ada laporan. Klik "+ Lapor Jalan rusak" untuk membuat laporan baru!
-            </Text>
-          </View>
-        )}
-
-        {/* Daftar Kartu Laporan */}
-        {reports.map((item) => {
-          const statusBadge = formatStatusBadge(item.status);
-          const sevBadge = formatSeverityBadge(item.severity);
-          const imgUri = resolveImageUrl(item.image_url);
-          const detectionsCount = item.ai_analysis?.total_detections ?? 0;
-
-          return (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.card}
-              onPress={() => setSelectedReport(item)}>
-              <View style={styles.imagePlaceholder}>
-                {imgUri ? (
-                  <Image
-                    source={{ uri: imgUri }}
-                    style={styles.cardImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Text style={{ fontWeight: 'bold', color: '#666' }}>FOTO</Text>
-                )}
-              </View>
-              <View style={styles.cardTextContainer}>
-                <Text style={styles.cardTitle} numberOfLines={2}>
-                  {item.title || item.address || 'Laporan Kerusakan Jalan'}
+          {/* Status Strip */}
+          {health && (
+            <View style={styles.statusStrip}>
+              <View style={styles.statusItem}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: health.backendOnline ? Palette.success : Palette.danger },
+                  ]}
+                />
+                <Text style={styles.statusText}>
+                  Server: {health.backendOnline ? 'Terhubung' : 'Terputus'}
                 </Text>
-                {item.address && (
-                  <Text style={styles.cardAddress} numberOfLines={1}>
-                    📍 {item.address}
-                  </Text>
-                )}
-                <Text style={styles.cardDate}>{formatDateID(item.created_at)}</Text>
-
-                <View style={styles.cardBadgesRow}>
-                  <View style={[styles.badge, { backgroundColor: statusBadge.bg }]}>
-                    <Text style={[styles.badgeText, { color: statusBadge.text }]}>
-                      {statusBadge.label}
-                    </Text>
-                  </View>
-                  <View style={[styles.badge, { backgroundColor: sevBadge.bg }]}>
-                    <Text style={[styles.badgeText, { color: sevBadge.text }]}>
-                      {item.severity?.toUpperCase() || 'MEDIUM'}
-                    </Text>
-                  </View>
-                  {detectionsCount > 0 && (
-                    <View style={[styles.badge, { backgroundColor: '#FEF3C7' }]}>
-                      <Text style={styles.badgeText}>🤖 {detectionsCount} titik</Text>
-                    </View>
-                  )}
-                </View>
               </View>
-            </TouchableOpacity>
-          );
-        })}
+              <View style={styles.statusDivider} />
+              <View style={styles.statusItem}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: health.aiOnline ? Palette.success : Palette.yellow },
+                  ]}
+                />
+                <Text style={styles.statusText}>
+                  Deteksi Foto: {health.aiOnline ? 'Aktif' : 'Siaga'}
+                </Text>
+              </View>
+            </View>
+          )}
 
-        <View style={{ height: 100 }} />
+          {/* Hero CTA Card */}
+          <TouchableOpacity
+            activeOpacity={0.88}
+            style={styles.ctaCard}
+            onPress={() =>
+              router.push((user ? '/lapor' : '/signup?mode=signup') as any)
+            }>
+            <View style={styles.ctaCopy}>
+              <Text style={styles.ctaEyebrow}>LAPOR CEPAT</Text>
+              <Text style={styles.ctaTitle}>Temukan jalan rusak di sekitar Anda?</Text>
+              <Text style={styles.ctaDesc}>
+                {user
+                  ? 'Unggah foto kondisi jalan untuk deteksi otomatis dan penyusunan laporan resmi.'
+                  : 'Daftar atau masuk terlebih dahulu untuk mengunggah foto dan membuat laporan resmi.'}
+              </Text>
+            </View>
+            <View style={styles.ctaButtonBox}>
+              <Text style={styles.ctaButtonText}>
+                {user ? 'Buat Laporan' : 'Daftar untuk Lapor'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Summary Metrics */}
+          <View style={styles.statsRow}>
+            <View style={[styles.statCard, { backgroundColor: Palette.surface }]}>
+              <Text style={styles.statValue}>{totalCount}</Text>
+              <Text style={styles.statLabel}>Total Laporan</Text>
+            </View>
+            <View style={[styles.statCard, { backgroundColor: Palette.yellow }]}>
+              <Text style={styles.statValue}>{inProgressCount}</Text>
+              <Text style={styles.statLabel}>Diproses</Text>
+            </View>
+            <View style={[styles.statCard, { backgroundColor: Palette.success }]}>
+              <Text style={styles.statValue}>{fixedCount}</Text>
+              <Text style={styles.statLabel}>Selesai</Text>
+            </View>
+          </View>
+
+          {/* Feed Section Header */}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Laporan Terkini</Text>
+            <TouchableOpacity onPress={() => router.push('/riwayat' as any)}>
+              <Text style={styles.sectionLink}>Lihat Semua</Text>
+            </TouchableOpacity>
+          </View>
+
+          {loading && (
+            <View style={styles.stateBox}>
+              <ActivityIndicator size="large" color={Palette.ink} />
+              <Text style={styles.stateText}>Memuat daftar laporan warga...</Text>
+            </View>
+          )}
+
+          {errorMsg && (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorTitle}>Gagal Memuat Data</Text>
+              <Text style={styles.errorText}>{errorMsg}</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={loadData}>
+                <Text style={styles.retryBtnText}>Coba Lagi</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {!loading && reports.length === 0 && !errorMsg && (
+            <View style={styles.stateBox}>
+              <Text style={styles.emptyTitle}>Belum ada laporan masuk</Text>
+              <Text style={styles.stateText}>
+                Mulai laporkan kerusakan jalan agar dapat segera ditindaklanjuti.
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyActionBtn}
+                onPress={() =>
+                  router.push((user ? '/lapor' : '/signup?mode=signup') as any)
+                }>
+                <Text style={styles.emptyActionText}>
+                  {user ? 'Buat Laporan Pertama' : 'Daftar untuk Melapor'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Report Cards */}
+          <View style={styles.listStack}>
+            {reports.map((item) => {
+              const statusBadge = formatStatusBadge(item.status);
+              const sevBadge = formatSeverityBadge(item.severity);
+              const imgUri = resolveImageUrl(item.image_url);
+              const detectionsCount = item.ai_analysis?.total_detections ?? 0;
+
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  activeOpacity={0.85}
+                  style={styles.reportCard}
+                  onPress={() => setSelectedReport(item)}>
+                  <View style={styles.thumbBox}>
+                    {imgUri ? (
+                      <Image
+                        source={{ uri: imgUri }}
+                        style={styles.thumbImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <Text style={styles.thumbFallback}>Tanpa Foto</Text>
+                    )}
+                  </View>
+
+                  <View style={styles.cardBody}>
+                    <Text style={styles.cardTitle} numberOfLines={2}>
+                      {item.title || item.address || 'Laporan Kerusakan Jalan'}
+                    </Text>
+
+                    {item.address ? (
+                      <Text style={styles.cardAddress} numberOfLines={1}>
+                        {item.address}
+                      </Text>
+                    ) : null}
+
+                    <Text style={styles.cardDate}>{formatDateID(item.created_at)}</Text>
+
+                    <View style={styles.badgeRow}>
+                      <View style={[styles.badge, { backgroundColor: statusBadge.bg }]}>
+                        <Text style={[styles.badgeText, { color: statusBadge.text }]}>
+                          {statusBadge.label}
+                        </Text>
+                      </View>
+                      <View style={[styles.badge, { backgroundColor: sevBadge.bg }]}>
+                        <Text style={[styles.badgeText, { color: sevBadge.text }]}>
+                          {sevBadge.label}
+                        </Text>
+                      </View>
+                      {detectionsCount > 0 && (
+                        <View style={[styles.badge, { backgroundColor: Palette.highlight }]}>
+                          <Text style={[styles.badgeText, { color: Palette.ink }]}>
+                            {detectionsCount} titik
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
       </ScrollView>
 
-      {/* Modal Detail & Evaluasi Laporan */}
       <ReportDetailModal
         visible={Boolean(selectedReport)}
         reportId={selectedReport?.id || null}
@@ -211,252 +291,330 @@ export default function Beranda() {
         onUpdated={loadData}
       />
 
-      {/* Menu Navigasi Bawah */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={[styles.navItem, styles.navActive]}>
-          <Text style={styles.navTextActive}>Beranda</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => router.push('/riwayat' as any)}>
-          <Text style={styles.navText}>Riwayat</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => router.push('/profil' as any)}>
-          <Text style={styles.navText}>Profil</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      <BottomNav active="beranda" />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Palette.canvas,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 92,
+    alignItems: 'center',
+  },
   container: {
-    flex: 1,
-    backgroundColor: '#F3F4F6',
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    gap: 16,
   },
-  scrollArea: {
-    padding: 20,
-    paddingTop: 45,
-  },
-  headerRow: {
+  headerCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 16,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    flexWrap: 'wrap',
+    gap: 12,
+    ...BrutalShadow.md,
   },
-  header: {
-    fontSize: 26,
+  headerTextWrap: {
+    gap: 2,
+  },
+  eyebrow: {
+    fontSize: 10,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.accent,
+    letterSpacing: 0.8,
   },
-  refreshBtn: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#000',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  refreshBtnText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#000',
-  },
-  statusBannerRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 18,
-  },
-  statusTag: {
-    borderWidth: 2,
-    borderColor: '#000',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  statusTagText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#000',
-  },
-  reportButton: {
-    backgroundColor: '#FADCB6',
-    padding: 18,
-    borderRadius: 30,
-    borderWidth: 3,
-    borderColor: '#3B2313',
-    alignItems: 'center',
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  reportButtonText: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#3B2313',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 25,
-    gap: 8,
-  },
-  statBox: {
-    flex: 1,
-    borderWidth: 3,
-    borderColor: '#000',
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 3, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  statText: {
-    fontWeight: '900',
-    fontSize: 13,
-    color: '#000',
-  },
-  sectionTitle: {
+  greeting: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 15,
+    color: Palette.ink,
   },
-  centerBox: {
-    padding: 30,
-    alignItems: 'center',
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  loadingText: {
-    marginTop: 8,
-    fontWeight: '800',
-    color: '#000',
+  headerBtn: {
+    backgroundColor: Palette.canvas,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    ...BrutalShadow.sm,
   },
-  errorBox: {
-    backgroundColor: '#FCA5A5',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 12,
-    marginBottom: 16,
+  headerBtnAccent: {
+    backgroundColor: Palette.yellow,
   },
-  errorText: {
+  headerBtnAuth: {
+    backgroundColor: Palette.accent,
+  },
+  headerBtnAuthText: {
+    fontSize: 12,
     fontWeight: '900',
-    color: '#000',
+    color: Palette.accentText,
   },
-  emptyBox: {
-    backgroundColor: '#fff',
-    borderWidth: 3,
-    borderColor: '#000',
-    padding: 20,
-    alignItems: 'center',
-  },
-  emptyText: {
+  headerBtnText: {
+    fontSize: 12,
     fontWeight: '800',
-    color: '#374151',
+    color: Palette.ink,
+  },
+  statusStrip: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.ink,
+  },
+  statusDivider: {
+    width: 1.5,
+    height: 14,
+    backgroundColor: '#D1D5DB',
+  },
+  ctaCard: {
+    backgroundColor: Palette.accent,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 18,
+    gap: 14,
+    ...BrutalShadow.lg,
+  },
+  ctaCopy: {
+    gap: 4,
+  },
+  ctaEyebrow: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: Palette.yellow,
+    letterSpacing: 0.9,
+  },
+  ctaTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: Palette.accentText,
+    lineHeight: 26,
+  },
+  ctaDesc: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#FFF7ED',
+    fontWeight: '500',
+  },
+  ctaButtonBox: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    ...BrutalShadow.sm,
+  },
+  ctaButtonText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  statCard: {
+    flex: 1,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    gap: 2,
+    ...BrutalShadow.sm,
+  },
+  statValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.ink,
     textAlign: 'center',
   },
-  card: {
-    backgroundColor: '#E5E7EB',
-    borderWidth: 3,
-    borderColor: '#000',
+  sectionHeaderRow: {
     flexDirection: 'row',
-    padding: 10,
-    marginBottom: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 5, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  imagePlaceholder: {
-    width: 105,
-    height: 90,
-    backgroundColor: '#ccc',
-    borderWidth: 2,
-    borderColor: '#000',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 14,
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  sectionLink: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Palette.accent,
+    textDecorationLine: 'underline',
+  },
+  stateBox: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
+    ...BrutalShadow.sm,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  stateText: {
+    fontSize: 13,
+    color: Palette.inkMuted,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  emptyActionBtn: {
+    marginTop: 6,
+    backgroundColor: Palette.accent,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  emptyActionText: {
+    color: Palette.accentText,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  errorBox: {
+    backgroundColor: Palette.danger,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 14,
+    gap: 6,
+  },
+  errorTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: Palette.ink,
+    textTransform: 'uppercase',
+  },
+  errorText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.ink,
+  },
+  retryBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: 4,
+  },
+  retryBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  listStack: {
+    gap: 12,
+  },
+  reportCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    flexDirection: 'row',
+    padding: 12,
+    gap: 12,
+    ...BrutalShadow.md,
+  },
+  thumbBox: {
+    width: 96,
+    height: 96,
+    backgroundColor: Palette.canvas,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
     overflow: 'hidden',
   },
-  cardImage: {
+  thumbImage: {
     width: '100%',
     height: '100%',
   },
-  cardTextContainer: {
+  thumbFallback: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.inkMuted,
+    textAlign: 'center',
+  },
+  cardBody: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#000',
-    marginBottom: 3,
+    color: Palette.ink,
+    lineHeight: 20,
   },
   cardAddress: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#374151',
-    marginBottom: 2,
+    fontWeight: '600',
+    color: Palette.inkMuted,
   },
   cardDate: {
-    fontSize: 12,
-    color: '#000',
-    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.inkSubtle,
   },
-  cardBadgesRow: {
+  badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+    marginTop: 4,
   },
   badge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 8,
     paddingVertical: 3,
-    borderWidth: 2,
-    borderColor: '#000',
-    borderRadius: 12,
   },
   badgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#000',
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    borderTopWidth: 3,
-    borderColor: '#000',
-    backgroundColor: '#F3F4F6',
-    height: 70,
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  navItem: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRightWidth: 1,
-    borderColor: '#000',
-  },
-  navActive: {
-    backgroundColor: '#FF5E00',
-  },
-  navText: {
-    fontWeight: '900',
-    color: '#000',
-  },
-  navTextActive: {
-    fontWeight: '900',
-    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });
