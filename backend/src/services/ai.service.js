@@ -18,9 +18,20 @@ const LOCAL_VENV_PYTHON = path.join(ROAD_AI_DIR, '.venv', 'bin', 'python');
 const LOCAL_YOLO_MODEL = path.join(ROAD_AI_DIR, 'models', 'trained', 'road_damage_v1_best.pt');
 
 const ROAD_AI_URL = process.env.ROAD_AI_URL || 'http://localhost:8000';
-const LLM_API_URL = process.env.LLM_API_URL || '';
-const LLM_API_KEY = process.env.LLM_API_KEY || '';
-const LLM_MODEL = process.env.LLM_MODEL || 'qwen2.5:7b';
+
+// 1. Primary LLM: Qwen pada IP Tailscale (Ollama / OpenAI-compatible endpoint)
+const QWEN_API_URL = process.env.QWEN_API_URL || process.env.LLM_API_URL || '';
+const QWEN_API_KEY = process.env.QWEN_API_KEY || process.env.LLM_API_KEY || '';
+const QWEN_MODEL = process.env.QWEN_MODEL || process.env.LLM_MODEL || 'qwen2.5:7b';
+const QWEN_CONNECT_TIMEOUT_MS = Number(process.env.QWEN_CONNECT_TIMEOUT_MS) || 1500;
+const QWEN_TIMEOUT_MS = Number(process.env.QWEN_TIMEOUT_MS) || 5000;
+
+// 2. Secondary LLM (Fallback): Google Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+const GEMINI_BACKUP_MODEL = process.env.GEMINI_BACKUP_MODEL || 'gemini-flash-lite-latest';
+const GEMINI_API_URL = process.env.GEMINI_API_URL || '';
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 12000;
 
 // Pemetaan nama kelas dari model YOLO (road_damage.yaml) ke kategori standar laporan
 const YOLO_CLASS_TO_CATEGORY = {
@@ -301,8 +312,145 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
 };
 
 /**
- * Menyusun draf judul dan deskripsi laporan secara otomatis menggunakan LLM (jika terkonfigurasi)
- * atau menggunakan generator naratif terstruktur Bahasa Indonesia sebagai fallback.
+ * Memparse string respons LLM menjadi objek { title, description } yang tervalidasi
+ */
+const parseNarrativeJson = (rawContent) => {
+  if (!rawContent || typeof rawContent !== 'string') {
+    throw new Error('Respons teks LLM kosong.');
+  }
+  const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Respons LLM tidak mengandung format objek JSON.');
+  }
+  const parsed = JSON.parse(jsonMatch[0]);
+  if (!parsed.title || !parsed.description) {
+    throw new Error('JSON dari LLM tidak memiliki key "title" atau "description".');
+  }
+  return {
+    title: String(parsed.title).trim(),
+    description: String(parsed.description).trim(),
+  };
+};
+
+/**
+ * 1. Memanggil Primary LLM: Qwen pada IP Tailscale (mendukung endpoint OpenAI /v1/chat/completions maupun Ollama /api/chat & /api/generate)
+ */
+const callQwenTailscaleLlm = async (prompt) => {
+  // Cek cepat konektivitas host Tailscale (maks ~1.5 detik) agar tidak menunggu lama jika PC offline
+  const qwenOrigin = new URL(QWEN_API_URL).origin;
+  await fetch(qwenOrigin, {
+    method: 'GET',
+    signal: AbortSignal.timeout(QWEN_CONNECT_TIMEOUT_MS),
+  });
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (QWEN_API_KEY) {
+    headers.Authorization = `Bearer ${QWEN_API_KEY}`;
+  }
+
+  const isOllamaGenerate = QWEN_API_URL.endsWith('/api/generate');
+  const payload = isOllamaGenerate
+    ? {
+        model: QWEN_MODEL,
+        prompt,
+        stream: false,
+        format: 'json',
+        options: { temperature: 0.3 },
+      }
+    : {
+        model: QWEN_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        stream: false,
+        temperature: 0.3,
+      };
+
+  const response = await fetch(QWEN_API_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(QWEN_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const llmData = await response.json();
+  const rawContent =
+    llmData?.choices?.[0]?.message?.content ||
+    llmData?.message?.content ||
+    llmData?.response ||
+    '';
+
+  const parsed = parseNarrativeJson(rawContent);
+  return {
+    ...parsed,
+    generator: `llm:qwen (${QWEN_MODEL})`,
+  };
+};
+
+/**
+ * 2. Memanggil Secondary LLM Fallback: Google Gemini API (dengan retry ke model lite jika 503/429)
+ */
+const callSingleGeminiModel = async (modelName, prompt) => {
+  const baseUrl =
+    GEMINI_API_URL ||
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  const urlWithKey = `${baseUrl}${separator}key=${encodeURIComponent(GEMINI_API_KEY)}`;
+
+  const response = await fetch(urlWithKey, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        responseMimeType: 'application/json',
+      },
+    }),
+    signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const geminiData = await response.json();
+  const rawContent =
+    geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ||
+    geminiData?.choices?.[0]?.message?.content ||
+    '';
+
+  const parsed = parseNarrativeJson(rawContent);
+  return {
+    ...parsed,
+    generator: `llm:gemini (${modelName})`,
+  };
+};
+
+const callGeminiFallbackLlm = async (prompt) => {
+  const modelsToTry = [GEMINI_MODEL, GEMINI_BACKUP_MODEL].filter(
+    (m, idx, arr) => Boolean(m) && arr.indexOf(m) === idx
+  );
+
+  let lastError = null;
+  for (const modelName of modelsToTry) {
+    try {
+      return await callSingleGeminiModel(modelName, prompt);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[AI Service] Gemini model "${modelName}" gagal: ${err.message}`);
+    }
+  }
+  throw lastError || new Error('Semua model Gemini fallback gagal.');
+};
+
+/**
+ * Menyusun draf judul dan deskripsi laporan secara otomatis dengan skema Multi-Tier Fallback:
+ * [1] Primary LLM: Qwen pada IP Tailscale -> [2] Fallback LLM: Gemini API -> [3] Template Orchestrator Lokal
  */
 export const generateReportNarrative = async ({
   visionResult,
@@ -328,10 +476,7 @@ export const generateReportNarrative = async ({
     ? `${address} (${latitude}, ${longitude})`
     : `koordinat GPS (${latitude}, ${longitude})`;
 
-  // Jika endpoint LLM eksternal (OpenAI-compatible / Ollama / Qwen) dikonfigurasi di .env
-  if (LLM_API_URL) {
-    try {
-      const prompt = `Kamu adalah asisten AI sistem pelaporan jalan rusak UrusJakarta.
+  const prompt = `Kamu adalah asisten AI sistem pelaporan jalan rusak UrusJakarta.
 Susun draf laporan resmi dalam format JSON dengan key "title" dan "description" (Bahasa Indonesia formal dan ringkas) berdasarkan data berikut:
 - Lokasi: ${locationText}
 - Hasil Deteksi Visual YOLO: ${detectedItemsList.length > 0 ? detectedItemsList.join(', ') : 'Belum terdeteksi secara visual'}
@@ -340,43 +485,29 @@ Susun draf laporan resmi dalam format JSON dengan key "title" dan "description" 
 - Catatan Warga: ${userDescription || 'Tidak ada catatan tambahan'}
 Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
 
-      const headers = { 'Content-Type': 'application/json' };
-      if (LLM_API_KEY) {
-        headers.Authorization = `Bearer ${LLM_API_KEY}`;
-      }
-
-      const response = await fetch(LLM_API_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: LLM_MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.3,
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (response.ok) {
-        const llmData = await response.json();
-        const rawContent = llmData?.choices?.[0]?.message?.content || llmData?.response || '';
-        const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.title && parsed.description) {
-            return {
-              title: parsed.title,
-              description: parsed.description,
-              generator: `llm:${LLM_MODEL}`,
-            };
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[AI Service] LLM eksternal tidak dapat dihubungi, menggunakan template naratif standar:', err.message);
+  // TAHAP 1: Coba Primary LLM (Qwen pada IP Tailscale) terlebih dahulu
+  if (QWEN_API_URL) {
+    try {
+      return await callQwenTailscaleLlm(prompt);
+    } catch (qwenErr) {
+      console.warn(
+        `[AI Service] Primary LLM Qwen (${QWEN_API_URL}) gagal/timeout (${qwenErr.message}). Beralih ke Fallback Gemini API...`
+      );
     }
   }
 
-  // Fallback: Generator Naratif Terstruktur Otomatis
+  // TAHAP 2: Fallback ke Secondary LLM (Google Gemini API) jika Qwen tidak aktif / gagal
+  if (GEMINI_API_KEY) {
+    try {
+      return await callGeminiFallbackLlm(prompt);
+    } catch (geminiErr) {
+      console.warn(
+        `[AI Service] Secondary LLM Gemini API (${GEMINI_MODEL}) gagal (${geminiErr.message}). Beralih ke Template Naratif Lokal...`
+      );
+    }
+  }
+
+  // TAHAP 3: Fallback Terakhir -> Generator Naratif Terstruktur Otomatis (Lokal)
   const locationShort = address ? address.split(',')[0].trim() : `Titik (${ Number(latitude).toFixed(4)}, ${Number(longitude).toFixed(4)})`;
 
   if (metrics.category === 'undamaged') {
