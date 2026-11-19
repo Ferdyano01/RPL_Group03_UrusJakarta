@@ -11,12 +11,15 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Stack, router } from 'expo-router';
 
 import { YoloDetectionViewer } from '@/components/yolo-detection-viewer';
 import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
   DraftAnalysisResponse,
+  PickedImageFile,
   analyzeReportDraftApi,
   createReportApi,
   formatCategoryLabel,
@@ -28,7 +31,7 @@ import {
 export default function LaporScreen() {
   const isAuthenticated = Boolean(getAuthToken());
 
-  const [webFile, setWebFile] = useState<File | null>(null);
+  const [imageFile, setImageFile] = useState<PickedImageFile | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   const [address, setAddress] = useState('');
@@ -46,36 +49,84 @@ export default function LaporScreen() {
   const [draftCategory, setDraftCategory] = useState('pothole');
   const [draftSeverity, setDraftSeverity] = useState<'low' | 'medium' | 'high'>('high');
 
-  const handlePickWebFile = () => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/jpeg,image/png,image/webp';
-    input.onchange = (e: any) => {
-      const file = e.target?.files?.[0];
-      if (file) {
-        setWebFile(file);
-        setPreviewUri(URL.createObjectURL(file));
-        setAnalysisData(null);
-        setErrorMsg(null);
-      }
-    };
-    input.click();
+  const handlePickImage = async (fromCamera = false) => {
+    setErrorMsg(null);
+
+    if (Platform.OS === 'web' && !fromCamera && typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      input.onchange = (e: any) => {
+        const file = e.target?.files?.[0];
+        if (file) {
+          const uri = URL.createObjectURL(file);
+          setImageFile({
+            uri,
+            name: file.name,
+            type: file.type || 'image/jpeg',
+            webFile: file,
+          });
+          setPreviewUri(uri);
+          setAnalysisData(null);
+        }
+      };
+      input.click();
+      return;
+    }
+
+    const perm = fromCamera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!perm.granted) {
+      setErrorMsg(
+        fromCamera
+          ? 'Izin kamera ditolak. Aktifkan izin kamera pada pengaturan perangkat.'
+          : 'Izin akses galeri foto ditolak. Aktifkan izin foto pada pengaturan perangkat.'
+      );
+      return;
+    }
+
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const name = asset.fileName || `road-${Date.now()}.jpg`;
+      const type = asset.mimeType || 'image/jpeg';
+      setImageFile({ uri: asset.uri, name, type });
+      setPreviewUri(asset.uri);
+      setAnalysisData(null);
+    }
   };
 
-  const handleGetBrowserLocation = () => {
+  const handleGetLocation = async () => {
+    setErrorMsg(null);
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setLatitude(pos.coords.latitude.toFixed(6));
           setLongitude(pos.coords.longitude.toFixed(6));
-          setErrorMsg(null);
         },
         () => {
           setErrorMsg('Akses lokasi browser ditolak. Silakan isi koordinat secara manual.');
         }
       );
+      return;
     }
+
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setErrorMsg('Izin lokasi ditolak. Silakan isi Latitude & Longitude secara manual.');
+      return;
+    }
+
+    const pos = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    setLatitude(pos.coords.latitude.toFixed(6));
+    setLongitude(pos.coords.longitude.toFixed(6));
   };
 
   const validateLocationFields = (): boolean => {
@@ -98,7 +149,7 @@ export default function LaporScreen() {
       router.replace('/signup?mode=login' as any);
       return;
     }
-    if (!webFile) {
+    if (!imageFile) {
       setErrorMsg('Silakan pilih atau unggah foto kondisi jalan terlebih dahulu.');
       return;
     }
@@ -107,7 +158,7 @@ export default function LaporScreen() {
     setAnalyzing(true);
     try {
       const result = await analyzeReportDraftApi({
-        webFile,
+        imageFile,
         latitude,
         longitude,
         address: address.trim(),
@@ -132,7 +183,7 @@ export default function LaporScreen() {
       router.replace('/signup?mode=login' as any);
       return;
     }
-    if (!webFile && !analysisData?.draft.image_url) {
+    if (!imageFile && !analysisData?.draft.image_url) {
       setErrorMsg('Silakan unggah foto kondisi jalan terlebih dahulu sebelum mengirim laporan.');
       return;
     }
@@ -151,7 +202,7 @@ export default function LaporScreen() {
         image_url: analysisData?.draft.image_url || undefined,
         ai_analysis: analysisData?.ai_analysis || null,
         status: analysisData?.draft.suggested_status || 'submitted',
-        webFile: analysisData ? null : webFile,
+        imageFile: analysisData ? null : imageFile,
       });
       router.replace('/riwayat' as any);
     } catch (err: any) {
@@ -247,22 +298,25 @@ export default function LaporScreen() {
                   </View>
                 </View>
 
-                {Platform.OS === 'web' ? (
+                <View style={styles.uploadRow}>
                   <TouchableOpacity
                     activeOpacity={0.85}
-                    style={styles.uploadBtn}
-                    onPress={handlePickWebFile}>
-                    <Text style={styles.uploadBtnText}>
-                      {webFile ? `Ganti Foto (${webFile.name})` : 'Pilih Foto Kondisi Jalan'}
+                    style={[styles.uploadBtn, { flex: 1, marginBottom: 0 }]}
+                    onPress={() => handlePickImage(false)}>
+                    <Text style={styles.uploadBtnText} numberOfLines={1}>
+                      {imageFile ? `Ganti Foto (${imageFile.name})` : 'Pilih Foto Kondisi Jalan'}
                     </Text>
                   </TouchableOpacity>
-                ) : (
-                  <View style={styles.platformNotice}>
-                    <Text style={styles.platformNoticeText}>
-                      Unggah foto langsung tersedia melalui akses peramban web pada perangkat ini.
-                    </Text>
-                  </View>
-                )}
+
+                  {Platform.OS !== 'web' && (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      style={styles.cameraBtn}
+                      onPress={() => handlePickImage(true)}>
+                      <Text style={styles.uploadBtnText}>Kamera</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
 
                 {previewUri ? (
                   <View style={styles.previewWrap}>
@@ -304,14 +358,12 @@ export default function LaporScreen() {
                     </View>
                   </View>
 
-                  {Platform.OS === 'web' && (
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      style={styles.gpsBtn}
-                      onPress={handleGetBrowserLocation}>
-                      <Text style={styles.gpsBtnText}>Gunakan GPS</Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    style={styles.gpsBtn}
+                    onPress={handleGetLocation}>
+                    <Text style={styles.gpsBtnText}>Gunakan GPS</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <Text style={styles.inputLabel}>Alamat atau Patokan Jalan</Text>
@@ -725,6 +777,11 @@ const styles = StyleSheet.create({
     color: Palette.inkMuted,
     lineHeight: 17,
   },
+  uploadRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
   uploadBtn: {
     backgroundColor: Palette.yellow,
     borderWidth: 2,
@@ -733,6 +790,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: 'center',
     marginBottom: 14,
+    ...BrutalShadow.sm,
+  },
+  cameraBtn: {
+    backgroundColor: Palette.surfaceAlt,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     ...BrutalShadow.sm,
   },
   uploadBtnText: {

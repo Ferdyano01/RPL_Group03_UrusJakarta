@@ -1,5 +1,13 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+
+export interface PickedImageFile {
+  uri: string;
+  name: string;
+  type: string;
+  webFile?: File | null;
+}
 
 export interface UserProfile {
   id: string;
@@ -128,9 +136,31 @@ const setStorageItem = (key: string, value: string | null) => {
       } else {
         window.localStorage.setItem(key, value);
       }
+    } else if (Platform.OS !== 'web') {
+      if (value === null) {
+        void AsyncStorage.removeItem(key);
+      } else {
+        void AsyncStorage.setItem(key, value);
+      }
     }
   } catch {
     // Abaikan
+  }
+};
+
+export const initAuthStorage = async (): Promise<void> => {
+  if (Platform.OS === 'web') return;
+  try {
+    const [token, userRaw, apiUrl] = await Promise.all([
+      AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
+      AsyncStorage.getItem(STORAGE_KEYS.USER),
+      AsyncStorage.getItem(STORAGE_KEYS.API_URL),
+    ]);
+    if (token) memoryToken = token;
+    if (userRaw) memoryUser = JSON.parse(userRaw) as UserProfile;
+    if (apiUrl) memoryApiUrl = apiUrl;
+  } catch {
+    // Abaikan jika gagal membaca AsyncStorage
   }
 };
 
@@ -330,7 +360,26 @@ export const updateMyProfile = async (payload: {
   return res.data;
 };
 
+const appendImageToFormData = (
+  formData: FormData,
+  imageFile?: PickedImageFile | null,
+  webFile?: File | null
+) => {
+  if (imageFile?.webFile) {
+    formData.append('image', imageFile.webFile, imageFile.name);
+  } else if (imageFile) {
+    formData.append('image', {
+      uri: imageFile.uri,
+      name: imageFile.name,
+      type: imageFile.type || 'image/jpeg',
+    } as any);
+  } else if (webFile) {
+    formData.append('image', webFile, webFile.name);
+  }
+};
+
 export const analyzeReportDraftApi = async (params: {
+  imageFile?: PickedImageFile | null;
   webFile?: File | null;
   latitude: number | string;
   longitude: number | string;
@@ -339,9 +388,7 @@ export const analyzeReportDraftApi = async (params: {
   uploadImage?: boolean;
 }): Promise<DraftAnalysisResponse> => {
   const formData = new FormData();
-  if (params.webFile) {
-    formData.append('image', params.webFile, params.webFile.name);
-  }
+  appendImageToFormData(formData, params.imageFile, params.webFile);
   formData.append('latitude', String(params.latitude));
   formData.append('longitude', String(params.longitude));
   if (params.address) formData.append('address', params.address);
@@ -371,11 +418,12 @@ export const createReportApi = async (params: {
   image_url?: string | null;
   ai_analysis?: AiAnalysisMetadata | null;
   status?: string;
+  imageFile?: PickedImageFile | null;
   webFile?: File | null;
 }): Promise<ReportItem> => {
-  if (params.webFile) {
+  if (params.imageFile || params.webFile) {
     const formData = new FormData();
-    formData.append('image', params.webFile, params.webFile.name);
+    appendImageToFormData(formData, params.imageFile, params.webFile);
     formData.append('latitude', String(params.latitude));
     formData.append('longitude', String(params.longitude));
     if (params.title) formData.append('title', params.title);
