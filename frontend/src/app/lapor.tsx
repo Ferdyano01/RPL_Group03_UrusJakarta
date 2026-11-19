@@ -21,11 +21,13 @@ import {
   DraftAnalysisResponse,
   PickedImageFile,
   analyzeReportDraftApi,
+  confirmDuplicateReportApi,
   createReportApi,
   formatCategoryLabel,
   formatSeverityBadge,
   formatStatusBadge,
   getAuthToken,
+  reverseGeocodeApi,
 } from '@/services/api';
 
 export default function LaporScreen() {
@@ -41,6 +43,10 @@ export default function LaporScreen() {
 
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [addressAutoFilled, setAddressAutoFilled] = useState(false);
+  const [gpsHint, setGpsHint] = useState<string | null>(null);
+  const [confirmingDupId, setConfirmingDupId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<DraftAnalysisResponse | null>(null);
 
@@ -101,32 +107,104 @@ export default function LaporScreen() {
     }
   };
 
+  const formatNativeGeoAddress = (place: Location.LocationGeocodedAddress): string | null => {
+    const streetPart =
+      place.street && place.streetNumber
+        ? `${place.street} No. ${place.streetNumber}`
+        : place.street || place.name || null;
+    const parts: string[] = [];
+    for (const part of [streetPart, place.district, place.subregion || place.city]) {
+      if (part && !parts.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
+        parts.push(part);
+      }
+    }
+    return parts.length > 0 ? parts.join(', ') : null;
+  };
+
+  const applyCoordinatesAndAddress = async (latNum: number, lngNum: number) => {
+    setLatitude(latNum.toFixed(6));
+    setLongitude(lngNum.toFixed(6));
+
+    const shouldAutoFillAddress = !address.trim() || addressAutoFilled;
+    if (!shouldAutoFillAddress) {
+      setGpsHint('Koordinat GPS diperbarui (alamat manual Anda tetap dipertahankan).');
+      return;
+    }
+
+    let resolvedAddress: string | null = null;
+
+    if (Platform.OS !== 'web') {
+      try {
+        const places = await Location.reverseGeocodeAsync({
+          latitude: latNum,
+          longitude: lngNum,
+        });
+        if (places && places.length > 0) {
+          resolvedAddress = formatNativeGeoAddress(places[0]);
+        }
+      } catch {
+        // Fallback ke endpoint backend di bawah
+      }
+    }
+
+    if (!resolvedAddress) {
+      try {
+        const geo = await reverseGeocodeApi(latNum, lngNum);
+        if (geo.available && geo.address) {
+          resolvedAddress = geo.address;
+        }
+      } catch {
+        // Biarkan pengguna mengisi alamat secara manual jika gagal
+      }
+    }
+
+    if (resolvedAddress) {
+      setAddress(resolvedAddress);
+      setAddressAutoFilled(true);
+      setGpsHint('Alamat terisi otomatis dari GPS — silakan sunting atau tambahkan patokan bila perlu.');
+    } else {
+      setGpsHint('Koordinat GPS terisi, tetapi nama jalan otomatis belum tersedia. Silakan isi alamat secara manual.');
+    }
+  };
+
   const handleGetLocation = async () => {
     setErrorMsg(null);
+    setGpsHint(null);
+    setLocating(true);
+
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLatitude(pos.coords.latitude.toFixed(6));
-          setLongitude(pos.coords.longitude.toFixed(6));
+        async (pos) => {
+          try {
+            await applyCoordinatesAndAddress(pos.coords.latitude, pos.coords.longitude);
+          } finally {
+            setLocating(false);
+          }
         },
         () => {
-          setErrorMsg('Akses lokasi browser ditolak. Silakan isi koordinat secara manual.');
+          setLocating(false);
+          setErrorMsg('Akses lokasi browser ditolak. Silakan isi koordinat dan alamat secara manual.');
         }
       );
       return;
     }
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setErrorMsg('Izin lokasi ditolak. Silakan isi Latitude & Longitude secara manual.');
-      return;
-    }
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMsg('Izin lokasi ditolak. Silakan isi Latitude, Longitude, dan alamat secara manual.');
+        return;
+      }
 
-    const pos = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
-    setLatitude(pos.coords.latitude.toFixed(6));
-    setLongitude(pos.coords.longitude.toFixed(6));
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      await applyCoordinatesAndAddress(pos.coords.latitude, pos.coords.longitude);
+    } catch {
+      setErrorMsg('Gagal mengambil lokasi GPS. Silakan isi koordinat dan alamat secara manual.');
+    } finally {
+      setLocating(false);
+    }
   };
 
   const validateLocationFields = (): boolean => {
@@ -212,8 +290,36 @@ export default function LaporScreen() {
     }
   };
 
+  const handleConfirmDuplicate = async (reportId: string) => {
+    setErrorMsg(null);
+    if (!getAuthToken()) {
+      router.replace('/signup?mode=login' as any);
+      return;
+    }
+    setConfirmingDupId(reportId);
+    try {
+      await confirmDuplicateReportApi(
+        reportId,
+        userNotes.trim()
+          ? `Konfirmasi warga di lokasi yang sama: "${userNotes.trim()}"`
+          : undefined
+      );
+      router.replace('/riwayat' as any);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal mengonfirmasi laporan duplikat.');
+    } finally {
+      setConfirmingDupId(null);
+    }
+  };
+
   const detections = analysisData?.ai_analysis?.detections || [];
   const imgDims = analysisData?.ai_analysis?.image_dimensions;
+  const locationContext =
+    analysisData?.draft?.location_context || analysisData?.ai_analysis?.location_context;
+  const possibleDuplicates =
+    analysisData?.draft?.possible_duplicates ||
+    analysisData?.ai_analysis?.possible_duplicates ||
+    [];
   const recommendedStatus = analysisData
     ? formatStatusBadge(analysisData.draft.suggested_status)
     : null;
@@ -360,20 +466,27 @@ export default function LaporScreen() {
 
                   <TouchableOpacity
                     activeOpacity={0.85}
-                    style={styles.gpsBtn}
-                    onPress={handleGetLocation}>
-                    <Text style={styles.gpsBtnText}>Gunakan GPS</Text>
+                    style={[styles.gpsBtn, locating && styles.btnDisabled]}
+                    onPress={handleGetLocation}
+                    disabled={locating}>
+                    <Text style={styles.gpsBtnText}>
+                      {locating ? 'Mencari GPS...' : 'Gunakan GPS'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
                 <Text style={styles.inputLabel}>Alamat atau Patokan Jalan</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, gpsHint ? { marginBottom: 5 } : null]}
                   value={address}
-                  onChangeText={setAddress}
-                  placeholder="Masukkan nama jalan, nomor, dan kelurahan/kecamatan"
+                  onChangeText={(text: string) => {
+                    setAddress(text);
+                    setAddressAutoFilled(text.trim() === '');
+                  }}
+                  placeholder="Klik Gunakan GPS atau masukkan nama jalan & kelurahan"
                   placeholderTextColor={Palette.inkSubtle}
                 />
+                {gpsHint && <Text style={styles.gpsHintText}>{gpsHint}</Text>}
 
                 <View style={styles.coordRow}>
                   <View style={styles.coordCol}>
@@ -487,7 +600,86 @@ export default function LaporScreen() {
                         )}
                       </Text>
                     </View>
+                    {analysisData.draft.priority_score !== undefined && (
+                      <View style={styles.metricCell}>
+                        <Text style={styles.metricLabel}>Skor Prioritas</Text>
+                        <Text style={styles.metricValue}>
+                          {analysisData.draft.priority_score}/100
+                        </Text>
+                      </View>
+                    )}
+                    {locationContext && (
+                      <View style={styles.metricCell}>
+                        <Text style={styles.metricLabel}>Lokasi Strategis</Text>
+                        <Text style={styles.metricValue} numberOfLines={1}>
+                          {locationContext.strategic_score}/100 ({locationContext.road_class_label})
+                        </Text>
+                      </View>
+                    )}
                   </View>
+
+                  {locationContext && (
+                    <View style={styles.locationIntelBox}>
+                      <Text style={styles.locationIntelTitle}>
+                        Konteks Lokasi: {locationContext.detected_region} · Kepadatan{' '}
+                        {locationContext.population_density_tier === 'high'
+                          ? 'Tinggi'
+                          : locationContext.population_density_tier === 'medium'
+                            ? 'Sedang'
+                            : 'Rendah'}
+                      </Text>
+                      <Text style={styles.locationIntelSub}>
+                        {locationContext.nearby_vital_facilities?.length > 0
+                          ? `Dekat fasilitas vital: ${locationContext.nearby_vital_facilities.join(', ')}.`
+                          : 'Tidak ada fasilitas vital radius 300m yang terdeteksi.'}{' '}
+                        Laporan sekitar (150m): {locationContext.nearby_report_count} laporan.
+                      </Text>
+                      {analysisData.draft.severity_adjusted &&
+                        analysisData.draft.severity_adjustment_reason && (
+                          <Text style={styles.severityBoostNote}>
+                            {analysisData.draft.severity_adjustment_reason}
+                          </Text>
+                        )}
+                    </View>
+                  )}
+
+                  {possibleDuplicates.length > 0 && (
+                    <View style={styles.duplicateCard}>
+                      <Text style={styles.duplicateEyebrow}>
+                        KEMUNGKINAN DUPLIKAT TERDETEKSI ({possibleDuplicates.length})
+                      </Text>
+                      <Text style={styles.duplicateDesc}>
+                        Sudah ada laporan aktif dalam radius 35m dari titik ini. Anda dapat
+                        mengonfirmasi laporan yang sama untuk menaikkan prioritasnya, atau tetap
+                        kirim sebagai laporan terpisah.
+                      </Text>
+                      {possibleDuplicates.slice(0, 2).map((dup) => (
+                        <View key={dup.id} style={styles.duplicateItem}>
+                          <Text style={styles.duplicateTitle} numberOfLines={1}>
+                            {dup.title}
+                          </Text>
+                          <Text style={styles.duplicateMeta}>
+                            Jarak {dup.distance_meters} m · {dup.support_count} pelapor · Status:{' '}
+                            {formatStatusBadge(dup.status).label}
+                          </Text>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            style={[
+                              styles.duplicateBtn,
+                              confirmingDupId === dup.id && styles.btnDisabled,
+                            ]}
+                            onPress={() => handleConfirmDuplicate(dup.id)}
+                            disabled={Boolean(confirmingDupId)}>
+                            <Text style={styles.duplicateBtnText}>
+                              {confirmingDupId === dup.id
+                                ? 'Mengonfirmasi...'
+                                : 'Konfirmasi Laporan yang Sama (+1 Dukungan)'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
 
                   {recommendedStatus && (
                     <View style={styles.recommendRow}>
@@ -874,6 +1066,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: Palette.ink,
   },
+  gpsHintText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.inkMuted,
+    marginBottom: 12,
+  },
   inputLabel: {
     fontSize: 12,
     fontWeight: '800',
@@ -952,6 +1150,83 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     fontSize: 14,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  locationIntelBox: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 10,
+    gap: 4,
+    marginBottom: 12,
+  },
+  locationIntelTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  locationIntelSub: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: Palette.inkMuted,
+  },
+  severityBoostNote: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '800',
+    color: Palette.accent,
+  },
+  duplicateCard: {
+    backgroundColor: Palette.pending,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 12,
+    gap: 8,
+    marginBottom: 14,
+    ...BrutalShadow.sm,
+  },
+  duplicateEyebrow: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: Palette.ink,
+    letterSpacing: 0.4,
+  },
+  duplicateDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: Palette.ink,
+  },
+  duplicateItem: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 10,
+    gap: 4,
+  },
+  duplicateTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
+  duplicateMeta: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.inkMuted,
+  },
+  duplicateBtn: {
+    marginTop: 4,
+    backgroundColor: Palette.yellow,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  duplicateBtnText: {
+    fontSize: 12,
     fontWeight: '900',
     color: Palette.ink,
   },

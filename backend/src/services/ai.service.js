@@ -5,6 +5,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { evaluateLocationAndDuplicates } from './locationIntelligence.service.js';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -180,10 +181,78 @@ export const detectRoadDamageWithYOLO = async (fileBuffer, originalname = 'image
   }
 };
 
+const VISUAL_SEVERITY_SCORE = {
+  low: 25,
+  medium: 55,
+  high: 85,
+};
+
+/**
+ * Menghitung skor prioritas gabungan (kerusakan visual + lokasi strategis + dukungan warga)
+ * serta penyesuaian severity apabila kerusakan terjadi di lokasi strategis/padat/berulang.
+ */
+export const computePriorityAndEffectiveSeverity = ({
+  category,
+  visualSeverity = 'medium',
+  locationContext = null,
+  supportCount = 1,
+}) => {
+  const isUndamaged = String(category || '').toLowerCase() === 'undamaged';
+  const strategicScore = Number(locationContext?.strategic_score) || 0;
+  const duplicateCount = Number(locationContext?.duplicate_count) || 0;
+  const normalizedVisual = ['low', 'medium', 'high'].includes(visualSeverity)
+    ? visualSeverity
+    : 'medium';
+
+  const visualScore = isUndamaged ? 0 : VISUAL_SEVERITY_SCORE[normalizedVisual];
+  const supportBoost = Math.min(15, Math.max(0, Number(supportCount) - 1) * 5);
+
+  const priorityScore = isUndamaged
+    ? Math.min(25, Math.round(strategicScore * 0.25))
+    : Math.min(100, Math.round(0.6 * visualScore + 0.4 * strategicScore + supportBoost));
+
+  let effectiveSeverity = normalizedVisual;
+  let severityAdjusted = false;
+  let severityAdjustmentReason = null;
+
+  if (!isUndamaged) {
+    const reasons = [];
+    if (strategicScore >= 70) {
+      reasons.push(`lokasi strategis tinggi (skor ${strategicScore}/100)`);
+    }
+    if (duplicateCount >= 2 || supportCount >= 3) {
+      reasons.push('dilaporkan berulang oleh warga di titik yang sama');
+    }
+
+    if (normalizedVisual === 'medium' && (strategicScore >= 70 || duplicateCount >= 2 || supportCount >= 3)) {
+      effectiveSeverity = 'high';
+      severityAdjusted = true;
+      severityAdjustmentReason = `Ditingkatkan dari Sedang ke Parah karena ${reasons.join(' dan ')}.`;
+    } else if (normalizedVisual === 'low' && (strategicScore >= 75 || supportCount >= 3)) {
+      effectiveSeverity = 'medium';
+      severityAdjusted = true;
+      severityAdjustmentReason = `Ditingkatkan dari Ringan ke Sedang karena ${reasons.join(' dan ')}.`;
+    }
+  }
+
+  return {
+    visual_severity: normalizedVisual,
+    effective_severity: effectiveSeverity,
+    severity_adjusted: severityAdjusted,
+    severity_adjustment_reason: severityAdjustmentReason,
+    strategic_score: strategicScore,
+    priority_score: priorityScore,
+  };
+};
+
 /**
  * Menentukan kategori utama, tingkat keparahan (severity), dan rekomendasi status berdasarkan hasil deteksi YOLO
  */
-export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
+export const evaluateDamageMetrics = (
+  visionResult,
+  userDescription = '',
+  locationContext = null
+) => {
   const detections = visionResult?.detections || [];
   const classesDetected = visionResult?.summary?.classes_detected || {};
   const totalDetections = detections.length;
@@ -213,10 +282,16 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
 
     // Jika YOLO berhasil menganalisis gambar tetapi 0 deteksi dan tidak ada indikasi kerusakan di teks
     if (visionResult?.available && (!hasDamageKeyword || hasNormalKeyword)) {
+      const priorityInfo = computePriorityAndEffectiveSeverity({
+        category: 'undamaged',
+        visualSeverity: 'low',
+        locationContext,
+      });
       return {
         category: 'undamaged',
         primary_damage_label: 'Kondisi Jalan Normal (Tidak Terdeteksi Kerusakan)',
-        severity: 'low',
+        severity: priorityInfo.effective_severity,
+        ...priorityInfo,
         max_confidence: 0,
         needs_manual_review: true,
         suggested_status: 'pending_review',
@@ -240,10 +315,17 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
       fallbackSeverity = 'low';
     }
 
+    const priorityInfo = computePriorityAndEffectiveSeverity({
+      category: fallbackCategory,
+      visualSeverity: fallbackSeverity,
+      locationContext,
+    });
+
     return {
       category: fallbackCategory,
       primary_damage_label: fallbackCategory === 'pothole' ? 'Lubang Jalan' : 'Kerusakan Permukaan Jalan',
-      severity: fallbackSeverity,
+      severity: priorityInfo.effective_severity,
+      ...priorityInfo,
       max_confidence: 0,
       needs_manual_review: true,
       suggested_status: 'pending_review',
@@ -284,18 +366,24 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
   const potholeCount = classesDetected.lubang?.count || 0;
   const alligatorCrackCount = classesDetected.retak_kulit_buaya?.count || 0;
 
-  // Penentuan tingkat keparahan (low, medium, high)
-  let severity = 'low';
+  // Penentuan tingkat keparahan visual (low, medium, high)
+  let visualSeverity = 'low';
   if (
     potholeCount >= 3 ||
     maxRelativeBoxArea >= 0.08 ||
     (potholeCount >= 1 && maxConfidence >= 0.65) ||
     alligatorCrackCount >= 2
   ) {
-    severity = 'high';
+    visualSeverity = 'high';
   } else if (potholeCount >= 1 || totalDetections >= 2 || maxRelativeBoxArea >= 0.03) {
-    severity = 'medium';
+    visualSeverity = 'medium';
   }
+
+  const priorityInfo = computePriorityAndEffectiveSeverity({
+    category,
+    visualSeverity,
+    locationContext,
+  });
 
   // Sesuai State Machine: jika confidence rendah (< 0.45), arahkan ke pending_review untuk verifikasi moderator
   const needsManualReview = maxConfidence < 0.45;
@@ -304,7 +392,8 @@ export const evaluateDamageMetrics = (visionResult, userDescription = '') => {
   return {
     category,
     primary_damage_label: primaryDamageLabel,
-    severity,
+    severity: priorityInfo.effective_severity,
+    ...priorityInfo,
     max_confidence: Number(maxConfidence.toFixed(4)),
     needs_manual_review: needsManualReview,
     suggested_status: suggestedStatus,
@@ -459,6 +548,7 @@ export const generateReportNarrative = async ({
   latitude,
   longitude,
   address = '',
+  locationContext = null,
 }) => {
   const classesDetected = visionResult?.summary?.classes_detected || {};
   const detectedItemsList = Object.entries(classesDetected).map(([cls, info]) => {
@@ -476,12 +566,21 @@ export const generateReportNarrative = async ({
     ? `${address} (${latitude}, ${longitude})`
     : `koordinat GPS (${latitude}, ${longitude})`;
 
+  const locationSummaryLine = locationContext
+    ? `${locationContext.road_class_label} di wilayah ${locationContext.detected_region} (skor strategis ${locationContext.strategic_score}/100, skor prioritas ${metrics.priority_score}/100${
+        locationContext.nearby_vital_facilities?.length
+          ? `, dekat: ${locationContext.nearby_vital_facilities.join(', ')}`
+          : ''
+      })`
+    : 'Belum tersedia';
+
   const prompt = `Kamu adalah asisten AI sistem pelaporan jalan rusak UrusJakarta.
 Susun draf laporan resmi dalam format JSON dengan key "title" dan "description" (Bahasa Indonesia formal dan ringkas) berdasarkan data berikut:
 - Lokasi: ${locationText}
+- Konteks Strategis Lokasi: ${locationSummaryLine}
 - Hasil Deteksi Visual YOLO: ${detectedItemsList.length > 0 ? detectedItemsList.join(', ') : 'Belum terdeteksi secara visual'}
 - Kategori Utama: ${metrics.primary_damage_label}
-- Tingkat Keparahan: ${severityLabel} (${metrics.severity})
+- Tingkat Keparahan: ${severityLabel} (${metrics.severity})${metrics.severity_adjustment_reason ? ` — ${metrics.severity_adjustment_reason}` : ''}
 - Catatan Warga: ${userDescription || 'Tidak ada catatan tambahan'}
 Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
 
@@ -540,8 +639,21 @@ Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
   }
 
   descriptionParts.push(
-    `Tingkat keparahan kerusakan diklasifikasikan sebagai ${severityLabel.toLowerCase()} (${metrics.severity}).`
+    `Tingkat keparahan kerusakan diklasifikasikan sebagai ${severityLabel.toLowerCase()} (${metrics.severity}) dengan skor prioritas ${metrics.priority_score ?? '-'}/100.`
   );
+
+  if (locationContext && locationContext.strategic_score >= 60) {
+    const facilityNote = locationContext.nearby_vital_facilities?.length
+      ? ` dan berdekatan dengan ${locationContext.nearby_vital_facilities.join(', ')}`
+      : '';
+    descriptionParts.push(
+      `Lokasi berada pada ${locationContext.road_class_label.toLowerCase()} (${locationContext.detected_region}${facilityNote}, skor strategis ${locationContext.strategic_score}/100).`
+    );
+  }
+
+  if (metrics.severity_adjustment_reason) {
+    descriptionParts.push(metrics.severity_adjustment_reason);
+  }
 
   if (userDescription && userDescription.trim().length > 0) {
     descriptionParts.push(`Keterangan pelapor: "${userDescription.trim()}".`);
@@ -587,7 +699,8 @@ export const checkRoadAiHealth = async () => {
 };
 
 /**
- * Pipeline utama: Menganalisis gambar & input teks pengguna untuk menghasilkan draf & metadata ai_analysis
+ * Pipeline utama: Menganalisis gambar, konteks lokasi strategis, deteksi duplikat, & teks pengguna
+ * untuk menghasilkan draf & metadata ai_analysis
  */
 export const analyzeReportSubmission = async ({
   fileBuffer,
@@ -597,6 +710,8 @@ export const analyzeReportSubmission = async ({
   latitude,
   longitude,
   address = '',
+  existingReports = [],
+  locationEvaluation = null,
 }) => {
   let visionResult = {
     available: false,
@@ -608,7 +723,25 @@ export const analyzeReportSubmission = async ({
     visionResult = await detectRoadDamageWithYOLO(fileBuffer, originalname, mimetype);
   }
 
-  const metrics = evaluateDamageMetrics(visionResult, userDescription);
+  // Evaluasi metrik visual awal untuk mengetahui kategori kerusakan sebelum pengecekan duplikat
+  const preliminaryMetrics = evaluateDamageMetrics(visionResult, userDescription);
+
+  const locEval =
+    locationEvaluation ||
+    (await evaluateLocationAndDuplicates({
+      latitude,
+      longitude,
+      address,
+      userDescription,
+      category: preliminaryMetrics.category,
+      existingReports,
+    }));
+
+  const metrics = evaluateDamageMetrics(
+    visionResult,
+    userDescription,
+    locEval.location_context
+  );
 
   const narrative = await generateReportNarrative({
     visionResult,
@@ -617,6 +750,7 @@ export const analyzeReportSubmission = async ({
     latitude,
     longitude,
     address,
+    locationContext: locEval.location_context,
   });
 
   return {
@@ -624,6 +758,13 @@ export const analyzeReportSubmission = async ({
     description: narrative.description,
     category: metrics.category,
     severity: metrics.severity,
+    visual_severity: metrics.visual_severity,
+    severity_adjusted: metrics.severity_adjusted,
+    severity_adjustment_reason: metrics.severity_adjustment_reason,
+    strategic_score: metrics.strategic_score,
+    priority_score: metrics.priority_score,
+    location_context: locEval.location_context,
+    possible_duplicates: locEval.possible_duplicates,
     suggested_status: metrics.suggested_status,
     needs_manual_review: metrics.needs_manual_review,
     ai_analysis: {
@@ -638,6 +779,15 @@ export const analyzeReportSubmission = async ({
       needs_manual_review: metrics.needs_manual_review,
       narrative_generator: narrative.generator,
       original_user_description: userDescription || null,
+      visual_severity: metrics.visual_severity,
+      effective_severity: metrics.effective_severity,
+      severity_adjusted: metrics.severity_adjusted,
+      severity_adjustment_reason: metrics.severity_adjustment_reason,
+      strategic_score: metrics.strategic_score,
+      priority_score: metrics.priority_score,
+      location_context: locEval.location_context,
+      possible_duplicates: locEval.possible_duplicates,
+      support_count: 1,
     },
   };
 };

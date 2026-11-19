@@ -6,6 +6,7 @@ import {
   shouldFallbackToLocal,
   setStorageMode,
 } from '../config/localStore.js';
+import { computePriorityAndEffectiveSeverity } from './ai.service.js';
 
 // Pemetaan tab filter status dari Frontend (riwayat.tsx) ke enum report_status di PostgreSQL
 const STATUS_GROUP_MAP = {
@@ -131,13 +132,41 @@ export const createReport = async ({
 };
 
 /**
- * Mengambil daftar semua laporan dengan dukungan filter dan paginasi
+ * Mengambil ringkasan laporan terbaru/aktif untuk keperluan analisis kedekatan koordinat & deteksi duplikat
+ */
+export const getReportsForSpatialAnalysis = async () => {
+  const { data, error } = await supabaseAdmin
+    .from('reports')
+    .select('id, title, address, category, severity, status, latitude, longitude, created_at, ai_analysis')
+    .order('created_at', { ascending: false })
+    .limit(300);
+
+  if (error) {
+    if (shouldFallbackToLocal(error)) {
+      setStorageMode('local_fallback');
+      const db = readLocalDb();
+      return db.reports || [];
+    }
+    console.warn('[Reports Service] Gagal mengambil data spasial laporan:', error.message);
+    return [];
+  }
+
+  setStorageMode('supabase');
+  return data || [];
+};
+
+const getReportPriorityScore = (report) =>
+  Number(report?.ai_analysis?.priority_score ?? report?.priority_score ?? 0);
+
+/**
+ * Mengambil daftar semua laporan dengan dukungan filter, pengurutan (terbaru/prioritas), dan paginasi
  */
 export const getAllReports = async ({
   status,
   category,
   severity,
   search,
+  sort = 'newest',
   page = 1,
   limit = 10,
 } = {}) => {
@@ -145,6 +174,7 @@ export const getAllReports = async ({
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
   const from = (pageNum - 1) * limitNum;
   const to = from + limitNum - 1;
+  const sortByPriority = String(sort || '').toLowerCase() === 'priority';
 
   let query = supabaseAdmin
     .from('reports')
@@ -160,8 +190,13 @@ export const getAllReports = async ({
     `,
       { count: 'exact' }
     )
-    .order('created_at', { ascending: false })
-    .range(from, to);
+    .order('created_at', { ascending: false });
+
+  if (sortByPriority) {
+    query = query.range(0, 199);
+  } else {
+    query = query.range(from, to);
+  }
 
   if (status && status.toUpperCase() !== 'SEMUA') {
     const upperStatus = status.toUpperCase();
@@ -191,9 +226,13 @@ export const getAllReports = async ({
     if (shouldFallbackToLocal(error)) {
       setStorageMode('local_fallback');
       const db = readLocalDb();
-      const sorted = [...db.reports].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
+      const sorted = [...db.reports].sort((a, b) => {
+        if (sortByPriority) {
+          const diff = getReportPriorityScore(b) - getReportPriorityScore(a);
+          if (diff !== 0) return diff;
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
       const filtered = filterLocalReports(sorted, { status, category, severity, search });
       const total = filtered.length;
       const paged = filtered.slice(from, to + 1).map((r) => {
@@ -219,13 +258,26 @@ export const getAllReports = async ({
   }
 
   setStorageMode('supabase');
+
+  let finalReports = data || [];
+  let totalCount = count || 0;
+  if (sortByPriority) {
+    finalReports = [...finalReports].sort((a, b) => {
+      const diff = getReportPriorityScore(b) - getReportPriorityScore(a);
+      if (diff !== 0) return diff;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    totalCount = finalReports.length;
+    finalReports = finalReports.slice(from, to + 1);
+  }
+
   return {
-    reports: data || [],
+    reports: finalReports,
     pagination: {
-      total: count || 0,
+      total: totalCount,
       page: pageNum,
       limit: limitNum,
-      total_pages: count ? Math.ceil(count / limitNum) : 0,
+      total_pages: totalCount ? Math.ceil(totalCount / limitNum) : 0,
     },
   };
 };
@@ -458,6 +510,110 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
       },
     ]);
   }
+
+  setStorageMode('supabase');
+  return data;
+};
+
+/**
+ * Mengonfirmasi laporan aktif yang terdeteksi sebagai duplikat:
+ * menambah jumlah dukungan warga (+1) dan menghitung ulang skor prioritas laporan induk.
+ */
+export const confirmDuplicateReport = async (reportId, userId, notes = null) => {
+  const existing = await getReportById(reportId);
+
+  if (['fixed', 'closed', 'rejected'].includes(String(existing.status || '').toLowerCase())) {
+    throw new Error('Laporan ini sudah selesai atau ditutup sehingga tidak dapat digabungkan.');
+  }
+
+  const prevAi = existing.ai_analysis || {};
+  const supporterIds = Array.isArray(prevAi.supporter_ids) ? [...prevAi.supporter_ids] : [];
+
+  if (existing.user_id === userId || supporterIds.includes(userId)) {
+    throw new Error('Anda sudah melaporkan atau mengonfirmasi titik kerusakan ini.');
+  }
+
+  supporterIds.push(userId);
+  const newSupportCount = (Number(prevAi.support_count) || 1) + 1;
+  const visualSeverity = prevAi.visual_severity || existing.severity || 'medium';
+
+  const recalculated = computePriorityAndEffectiveSeverity({
+    category: existing.category,
+    visualSeverity,
+    locationContext: prevAi.location_context || null,
+    supportCount: newSupportCount,
+  });
+
+  const nextSeverity =
+    existing.severity === 'high' ? 'high' : recalculated.effective_severity;
+
+  const updatedAi = {
+    ...prevAi,
+    support_count: newSupportCount,
+    supporter_ids: supporterIds,
+    priority_score: recalculated.priority_score,
+    effective_severity: nextSeverity,
+    severity_adjusted: prevAi.severity_adjusted || recalculated.severity_adjusted,
+    severity_adjustment_reason:
+      recalculated.severity_adjustment_reason || prevAi.severity_adjustment_reason || null,
+  };
+
+  const now = new Date().toISOString();
+  const historyNote =
+    notes && String(notes).trim()
+      ? String(notes).trim()
+      : `Warga lain mengonfirmasi kerusakan yang sama di lokasi ini (total ${newSupportCount} pelapor, skor prioritas ${recalculated.priority_score}/100).`;
+
+  const { data, error } = await supabaseAdmin
+    .from('reports')
+    .update({
+      severity: nextSeverity,
+      ai_analysis: updatedAi,
+      updated_at: now,
+    })
+    .eq('id', reportId)
+    .select('*')
+    .single();
+
+  if (error && shouldFallbackToLocal(error)) {
+    setStorageMode('local_fallback');
+    const db = readLocalDb();
+    const idx = db.reports.findIndex((r) => r.id === reportId);
+    if (idx === -1) {
+      throw new Error('Laporan tidak ditemukan.');
+    }
+    db.reports[idx] = {
+      ...db.reports[idx],
+      severity: nextSeverity,
+      ai_analysis: updatedAi,
+      updated_at: now,
+    };
+    db.status_history.push({
+      id: crypto.randomUUID(),
+      report_id: reportId,
+      changed_by: userId,
+      previous_status: existing.status,
+      new_status: existing.status,
+      notes: historyNote,
+      created_at: now,
+    });
+    writeLocalDb(db);
+    return db.reports[idx];
+  }
+
+  if (error) {
+    throw new Error(`Gagal mengonfirmasi duplikat laporan: ${error.message}`);
+  }
+
+  await supabaseAdmin.from('status_history').insert([
+    {
+      report_id: reportId,
+      changed_by: userId,
+      previous_status: existing.status,
+      new_status: existing.status,
+      notes: historyNote,
+    },
+  ]);
 
   setStorageMode('supabase');
   return data;

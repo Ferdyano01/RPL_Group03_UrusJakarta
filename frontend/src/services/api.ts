@@ -33,6 +33,37 @@ export interface YoloDetection {
   bounding_box: BoundingBox;
 }
 
+export interface LocationContext {
+  strategic_score: number;
+  strategic_tier: 'low' | 'medium' | 'high';
+  road_class: 'arterial' | 'collector' | 'local';
+  road_class_label: string;
+  population_density_tier: 'low' | 'medium' | 'high';
+  detected_region: string;
+  nearby_vital_facilities: string[];
+  nearby_report_count: number;
+  duplicate_count: number;
+  score_breakdown?: {
+    road_class_score: number;
+    poi_proximity_score: number;
+    population_density_score: number;
+    report_frequency_score: number;
+  };
+  data_source?: string;
+}
+
+export interface PossibleDuplicate {
+  id: string;
+  title: string;
+  address: string | null;
+  category: string;
+  severity: 'low' | 'medium' | 'high';
+  status: string;
+  distance_meters: number;
+  support_count: number;
+  created_at: string | null;
+}
+
 export interface AiAnalysisMetadata {
   analyzed_at: string;
   vision_service_available: boolean;
@@ -45,6 +76,16 @@ export interface AiAnalysisMetadata {
   needs_manual_review: boolean;
   narrative_generator: string;
   original_user_description?: string | null;
+  visual_severity?: 'low' | 'medium' | 'high';
+  effective_severity?: 'low' | 'medium' | 'high';
+  severity_adjusted?: boolean;
+  severity_adjustment_reason?: string | null;
+  strategic_score?: number;
+  priority_score?: number;
+  location_context?: LocationContext | null;
+  possible_duplicates?: PossibleDuplicate[];
+  support_count?: number;
+  duplicate_of?: string | null;
 }
 
 export interface ReportItem {
@@ -96,6 +137,13 @@ export interface DraftAnalysisResponse {
     description: string;
     category: string;
     severity: 'low' | 'medium' | 'high';
+    visual_severity?: 'low' | 'medium' | 'high';
+    severity_adjusted?: boolean;
+    severity_adjustment_reason?: string | null;
+    strategic_score?: number;
+    priority_score?: number;
+    location_context?: LocationContext | null;
+    possible_duplicates?: PossibleDuplicate[];
     latitude: number;
     longitude: number;
     address: string | null;
@@ -467,6 +515,7 @@ export const fetchAllReportsApi = async (params?: {
   category?: string;
   severity?: string;
   search?: string;
+  sort?: 'newest' | 'priority';
   page?: number;
   limit?: number;
 }) => {
@@ -475,6 +524,7 @@ export const fetchAllReportsApi = async (params?: {
   if (params?.category) qs.set('category', params.category);
   if (params?.severity) qs.set('severity', params.severity);
   if (params?.search) qs.set('search', params.search);
+  if (params?.sort) qs.set('sort', params.sort);
   if (params?.page) qs.set('page', String(params.page));
   if (params?.limit) qs.set('limit', String(params.limit));
 
@@ -484,6 +534,41 @@ export const fetchAllReportsApi = async (params?: {
     data: ReportItem[];
     pagination: { total: number; page: number; limit: number; total_pages: number };
   }>(`/api/reports${queryString}`);
+};
+
+export interface ReverseGeocodeResponse {
+  available: boolean;
+  address: string | null;
+  region?: string | null;
+  source?: string;
+}
+
+export const reverseGeocodeApi = async (
+  latitude: number,
+  longitude: number
+): Promise<ReverseGeocodeResponse> => {
+  const qs = new URLSearchParams({
+    lat: String(latitude),
+    lng: String(longitude),
+  });
+  const res = await apiRequest<{ status: string; data: ReverseGeocodeResponse }>(
+    `/api/reports/reverse-geocode?${qs.toString()}`
+  );
+  return res.data;
+};
+
+export const confirmDuplicateReportApi = async (
+  reportId: string,
+  notes?: string
+): Promise<ReportItem> => {
+  const res = await apiRequest<{ status: string; data: ReportItem }>(
+    `/api/reports/${reportId}/confirm-duplicate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    }
+  );
+  return res.data;
 };
 
 export const fetchMyReportsApi = async (params?: {

@@ -305,7 +305,43 @@ export function ReportDetailModal({
                       {formatCategoryLabel(ai.primary_damage_label || report.category)}
                     </Text>
                   </View>
+                  {ai.priority_score !== undefined && (
+                    <View style={styles.aiCell}>
+                      <Text style={styles.aiCellLabel}>Skor Prioritas</Text>
+                      <Text style={styles.aiCellValue}>{ai.priority_score}/100</Text>
+                    </View>
+                  )}
+                  {ai.location_context && (
+                    <View style={styles.aiCell}>
+                      <Text style={styles.aiCellLabel}>Lokasi Strategis</Text>
+                      <Text style={styles.aiCellValue} numberOfLines={1}>
+                        {ai.location_context.strategic_score}/100 ({ai.location_context.road_class_label})
+                      </Text>
+                    </View>
+                  )}
                 </View>
+
+                {ai.location_context && (
+                  <View style={styles.aiClassesBox}>
+                    <Text style={styles.aiSubTitle}>Analisis Strategis Lokasi & Dukungan</Text>
+                    <Text style={styles.aiClassItem}>
+                      - Wilayah: {ai.location_context.detected_region} (kepadatan{' '}
+                      {ai.location_context.population_density_tier})
+                    </Text>
+                    <Text style={styles.aiClassItem}>
+                      - Fasilitas sekitar:{' '}
+                      {ai.location_context.nearby_vital_facilities?.length
+                        ? ai.location_context.nearby_vital_facilities.join(', ')
+                        : 'Tidak terdeteksi dalam radius 300m'}
+                    </Text>
+                    <Text style={styles.aiClassItem}>
+                      - Dukungan pelapor: {ai.support_count ?? 1} warga
+                      {ai.severity_adjusted && ai.severity_adjustment_reason
+                        ? ` · ${ai.severity_adjustment_reason}`
+                        : ''}
+                    </Text>
+                  </View>
+                )}
 
                 {ai.classes_detected && Object.keys(ai.classes_detected).length > 0 && (
                   <View style={styles.aiClassesBox}>

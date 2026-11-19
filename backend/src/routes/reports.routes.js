@@ -25,6 +25,9 @@ router.get('/', reportsController.getAll);
 // Endpoint Terproteksi: Riwayat laporan milik pengguna yang sedang login (harus di atas /:id)
 router.get('/my-reports', requireAuth, reportsController.getMyReports);
 
+// Endpoint Publik / Umum: Konversi koordinat GPS menjadi nama jalan (harus di atas /:id)
+router.get('/reverse-geocode', reportsController.reverseGeocode);
+
 // Endpoint Publik / Umum: Detail 1 laporan berdasarkan UUID
 router.get('/:id', reportsController.getById);
 
@@ -33,6 +36,9 @@ router.post('/analyze', requireAuth, upload.single('image'), reportsController.a
 
 // Endpoint Terproteksi: Membuat laporan baru (mendukung JSON maupun multipart/form-data dengan field 'image')
 router.post('/', requireAuth, upload.single('image'), reportsController.create);
+
+// Endpoint Terproteksi: Konfirmasi laporan aktif terdekat sebagai duplikat lokasi yang sama (+1 dukungan)
+router.post('/:id/confirm-duplicate', requireAuth, reportsController.confirmDuplicate);
 
 // Endpoint Terproteksi: Memperbarui laporan (oleh pelapor saat masih draft/submitted atau oleh admin)
 router.put('/:id', requireAuth, reportsController.update);

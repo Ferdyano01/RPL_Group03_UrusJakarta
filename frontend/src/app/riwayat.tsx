@@ -35,6 +35,7 @@ const FILTER_TABS = [
 export default function Riwayat() {
   const [activeFilter, setActiveFilter] = useState<string>('SEMUA');
   const [scope, setScope] = useState<'all' | 'my'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'priority'>('newest');
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -48,9 +49,21 @@ export default function Riwayat() {
     try {
       if (scope === 'my' && getAuthToken()) {
         const res = await fetchMyReportsApi({ status: activeFilter, limit: 50 });
-        setReports(res.data || []);
+        const rows = res.data || [];
+        if (sortBy === 'priority') {
+          rows.sort(
+            (a, b) =>
+              Number(b.ai_analysis?.priority_score ?? 0) -
+              Number(a.ai_analysis?.priority_score ?? 0)
+          );
+        }
+        setReports(rows);
       } else {
-        const res = await fetchAllReportsApi({ status: activeFilter, limit: 50 });
+        const res = await fetchAllReportsApi({
+          status: activeFilter,
+          sort: sortBy,
+          limit: 50,
+        });
         setReports(res.data || []);
       }
     } catch (err: any) {
@@ -58,7 +71,7 @@ export default function Riwayat() {
     } finally {
       setLoading(false);
     }
-  }, [activeFilter, scope]);
+  }, [activeFilter, scope, sortBy]);
 
   useEffect(() => {
     loadReports();
@@ -146,6 +159,27 @@ export default function Riwayat() {
             })}
           </View>
 
+          {/* Sort Row */}
+          <View style={styles.sortRow}>
+            <Text style={styles.sortLabel}>Urutkan:</Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={[styles.sortBtn, sortBy === 'newest' && styles.sortBtnActive]}
+              onPress={() => setSortBy('newest')}>
+              <Text style={[styles.sortBtnText, sortBy === 'newest' && styles.sortBtnTextActive]}>
+                Terbaru
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={[styles.sortBtn, sortBy === 'priority' && styles.sortBtnActive]}
+              onPress={() => setSortBy('priority')}>
+              <Text style={[styles.sortBtnText, sortBy === 'priority' && styles.sortBtnTextActive]}>
+                Prioritas Tertinggi
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {loading && (
             <View style={styles.stateBox}>
               <ActivityIndicator size="large" color={Palette.ink} />
@@ -223,6 +257,20 @@ export default function Riwayat() {
                         <View style={[styles.badge, { backgroundColor: Palette.highlight }]}>
                           <Text style={[styles.badgeText, { color: Palette.ink }]}>
                             {detectionsCount} titik
+                          </Text>
+                        </View>
+                      )}
+                      {item.ai_analysis?.priority_score !== undefined && (
+                        <View style={[styles.badge, { backgroundColor: Palette.lime }]}>
+                          <Text style={[styles.badgeText, { color: Palette.ink }]}>
+                            Prioritas {item.ai_analysis.priority_score}
+                          </Text>
+                        </View>
+                      )}
+                      {(item.ai_analysis?.support_count ?? 1) > 1 && (
+                        <View style={[styles.badge, { backgroundColor: Palette.pending }]}>
+                          <Text style={[styles.badgeText, { color: Palette.ink }]}>
+                            {item.ai_analysis?.support_count} pelapor
                           </Text>
                         </View>
                       )}
@@ -382,6 +430,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: Palette.ink,
+  },
+  sortRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sortLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.inkMuted,
+  },
+  sortBtn: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  sortBtnActive: {
+    backgroundColor: Palette.yellow,
+    ...BrutalShadow.sm,
+  },
+  sortBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.ink,
+  },
+  sortBtnTextActive: {
+    fontWeight: '900',
   },
   stateBox: {
     backgroundColor: Palette.surface,
