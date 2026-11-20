@@ -7,20 +7,88 @@ import authRoutes from './routes/auth.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
 import { checkRoadAiHealth } from './services/ai.service.js';
 import { getStorageMode } from './config/localStore.js';
+import { createRateLimiter } from './middlewares/rateLimit.middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.disable('x-powered-by');
+// Percayai reverse proxy (Nginx/Caddy/Cloudflare) agar req.ip akurat untuk rate limiting
+app.set('trust proxy', process.env.TRUST_PROXY === 'false' ? false : 1);
+
+// Security headers standar (pengganti ringan helmet tanpa dependensi tambahan)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  next();
+});
+
+// Konfigurasi CORS aman: izinkan origin terdaftar, atau localhost/LAN pada mode development
+const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // Aplikasi native mobile (Expo Go), curl, & test suite
+  if (configuredOrigins.includes('*') || configuredOrigins.includes(origin)) {
+    return true;
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      const parsed = new URL(origin);
+      const host = parsed.hostname;
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)
+      ) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+};
 
 // Middlewares
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Origin tidak diizinkan oleh kebijakan CORS.'));
+      }
+    },
+  })
+);
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+// Rate limiter umum pada seluruh endpoint /api
+app.use(
+  '/api',
+  createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 300,
+  })
+);
+
+const staticAssetOptions = {
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  },
+};
 
 // Static files untuk gambar unggahan lokal dan sampel citra Road-AI
-app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
-app.use('/samples', express.static(path.resolve(__dirname, '../../road-ai/samples/input')));
+app.use('/uploads', express.static(path.resolve(__dirname, '../uploads'), staticAssetOptions));
+app.use('/samples', express.static(path.resolve(__dirname, '../../road-ai/samples/input'), staticAssetOptions));
 
 // Health check endpoint (termasuk status integrasi Road-AI)
 app.get('/api/health', async (req, res) => {
@@ -87,11 +155,25 @@ app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/reports', reportsRoutes);
 
-// Global Error Handler (termasuk untuk error Multer / ukuran file)
+// Global Error Handler (termasuk untuk error Multer / ukuran file / CORS)
 app.use((err, req, res, next) => {
-  return res.status(400).json({
+  const isProd = process.env.NODE_ENV === 'production';
+  const isClientError =
+    err.name === 'MulterError' ||
+    err.type === 'entity.parse.failed' ||
+    err.message?.includes('CORS') ||
+    err.message?.includes('Hanya file gambar') ||
+    err.message?.includes('signature biner');
+
+  const statusCode = isClientError ? 400 : err.statusCode || 400;
+  const message =
+    isProd && !isClientError
+      ? 'Terjadi kesalahan pada server.'
+      : err.message || 'Terjadi kesalahan pada server.';
+
+  return res.status(statusCode).json({
     status: 'error',
-    message: err.message || 'Terjadi kesalahan pada server.',
+    message,
   });
 });
 

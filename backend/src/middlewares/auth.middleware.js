@@ -1,8 +1,5 @@
 import jwt from 'jsonwebtoken';
-import '../config/supabaseClient.js';
-
-const getJwtSecret = () =>
-  (process.env.JWT_SECRET || 'urusjakarta_fallback_secret_2026').trim();
+import { getJwtSecret } from '../config/jwt.js';
 
 export const requireAuth = (req, res, next) => {
   try {
@@ -23,6 +20,25 @@ export const requireAuth = (req, res, next) => {
   } catch (err) {
     return res.status(401).json({ status: 'error', message: 'Token tidak valid atau telah kadaluwarsa.' });
   }
+};
+
+/**
+ * Middleware opsional: melampirkan req.user bila token Bearer valid tersedia,
+ * tetapi tetap mengizinkan akses anonim pada endpoint publik.
+ */
+export const optionalAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      req.user = jwt.verify(token, getJwtSecret());
+    } catch {
+      req.user = null;
+    }
+  } else {
+    req.user = null;
+  }
+  next();
 };
 
 export const requireRole = (allowedRoles) => {

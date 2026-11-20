@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 process.env.OSM_OVERPASS_ENABLED = 'false';
 process.env.OSM_NOMINATIM_ENABLED = 'false';
+process.env.QWEN_API_URL = '';
+process.env.GEMINI_API_KEY = '';
 
 import {
   calculateDistanceMeters,
@@ -217,6 +219,7 @@ describe('Reports API Integration (Local Fallback Mode)', () => {
   });
 
   after(async () => {
+    server.closeAllConnections?.();
     await new Promise((resolve) => server.close(resolve));
     if (originalDbSnapshot !== null) {
       fs.writeFileSync(LOCAL_DB_PATH, originalDbSnapshot, 'utf-8');

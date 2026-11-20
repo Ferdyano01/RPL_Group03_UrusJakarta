@@ -11,6 +11,16 @@ import {
   reverseGeocodeCoordinates,
 } from '../services/locationIntelligence.service.js';
 import { uploadImageToSupabase } from '../services/upload.service.js';
+import {
+  VALID_REPORT_CATEGORIES,
+  VALID_REPORT_SEVERITIES,
+  VALID_REPORT_STATUSES,
+  sanitizeReportImageUrl,
+  validateCoordinates,
+} from '../validators/report.validator.js';
+import { assertValidImageBuffer } from '../validators/upload.validator.js';
+
+const CITIZEN_ALLOWED_INITIAL_STATUSES = new Set(['draft', 'submitted', 'pending_review']);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,15 +67,27 @@ export const analyzeDraft = async (req, res) => {
       });
     }
 
-    const lat = latitude !== undefined && latitude !== '' ? Number(latitude) : -6.2088;
-    const lng = longitude !== undefined && longitude !== '' ? Number(longitude) : 106.8456;
+    if (req.file) {
+      try {
+        assertValidImageBuffer(req.file);
+      } catch (imgErr) {
+        return res.status(400).json({
+          status: 'error',
+          message: imgErr.message,
+        });
+      }
+    }
 
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    let coords;
+    try {
+      coords = validateCoordinates(latitude, longitude, { required: false });
+    } catch (coordErr) {
       return res.status(400).json({
         status: 'error',
-        message: 'Koordinat latitude dan longitude harus berupa angka yang valid.',
+        message: coordErr.message,
       });
     }
+    const { latitude: lat, longitude: lng } = coords;
 
     const existingReports = await reportsService.getReportsForSpatialAnalysis();
 
@@ -148,22 +170,9 @@ export const create = async (req, res) => {
       status,
     } = req.body;
 
-    if (latitude === undefined || longitude === undefined || latitude === '' || longitude === '') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Koordinat lokasi (latitude dan longitude) wajib diisi.',
-      });
-    }
-
-    const lat = Number(latitude);
-    const lng = Number(longitude);
-
-    if (Number.isNaN(lat) || Number.isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Koordinat latitude (-90 s/d 90) atau longitude (-180 s/d 180) tidak valid.',
-      });
-    }
+    const { latitude: lat, longitude: lng } = validateCoordinates(latitude, longitude, {
+      required: true,
+    });
 
     // Jika ai_analysis dikirim sebagai string JSON pada multipart/form-data, parse terlebih dahulu
     if (typeof ai_analysis === 'string' && ai_analysis.trim() !== '') {
@@ -175,6 +184,36 @@ export const create = async (req, res) => {
     }
 
     const inputFile = resolveInputFile(req);
+    if (req.file) {
+      assertValidImageBuffer(req.file);
+    }
+
+    if (category !== undefined && category !== '') {
+      const normalizedCat = String(category).trim().toLowerCase();
+      if (!VALID_REPORT_CATEGORIES.includes(normalizedCat)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Kategori kerusakan tidak valid: ${category}.`,
+        });
+      }
+      category = normalizedCat;
+    }
+
+    if (severity !== undefined && severity !== '') {
+      const normalizedSev = String(severity).trim().toLowerCase();
+      if (!VALID_REPORT_SEVERITIES.includes(normalizedSev)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Tingkat keparahan tidak valid: ${severity}.`,
+        });
+      }
+      severity = normalizedSev;
+    }
+
+    if (image_url !== undefined) {
+      image_url = sanitizeReportImageUrl(image_url);
+    }
+
     const existingReports = await reportsService.getReportsForSpatialAnalysis();
 
     // Jika pengguna mengirim file gambar langsung ke POST /api/reports
@@ -226,8 +265,8 @@ export const create = async (req, res) => {
       ai_analysis = textAnalysis.ai_analysis;
     }
 
-    // Pastikan metadata lokasi strategis & prioritas tetap terhitung bila laporan dikirim via JSON langsung
-    if (ai_analysis && typeof ai_analysis === 'object' && ai_analysis.priority_score === undefined) {
+    // Selalu hitung ulang skor strategis & skor prioritas di server agar klien tidak bisa memalsukan priority_score/support_count
+    if (ai_analysis && typeof ai_analysis === 'object') {
       const locEval = await evaluateLocationAndDuplicates({
         latitude: lat,
         longitude: lng,
@@ -236,10 +275,14 @@ export const create = async (req, res) => {
         category: category || 'pothole',
         existingReports,
       });
+      const visualSeverity = ['low', 'medium', 'high'].includes(ai_analysis.visual_severity)
+        ? ai_analysis.visual_severity
+        : severity || 'medium';
       const priorityInfo = computePriorityAndEffectiveSeverity({
         category: category || 'pothole',
-        visualSeverity: severity || 'medium',
+        visualSeverity,
         locationContext: locEval.location_context,
+        supportCount: 1,
       });
       severity = severity || priorityInfo.effective_severity;
       ai_analysis = {
@@ -247,7 +290,7 @@ export const create = async (req, res) => {
         ...priorityInfo,
         location_context: locEval.location_context,
         possible_duplicates: locEval.possible_duplicates,
-        support_count: ai_analysis.support_count || 1,
+        support_count: 1,
       };
     }
 
@@ -256,6 +299,15 @@ export const create = async (req, res) => {
         ...ai_analysis,
         duplicate_of: req.body.duplicate_of,
       };
+    }
+
+    const isStaff = req.user?.role === 'admin' || req.user?.role === 'officer';
+    let finalStatus = (status || 'submitted').toLowerCase();
+    if (!VALID_REPORT_STATUSES.includes(finalStatus)) {
+      finalStatus = 'submitted';
+    }
+    if (!isStaff && !CITIZEN_ALLOWED_INITIAL_STATUSES.has(finalStatus)) {
+      finalStatus = 'submitted';
     }
 
     const newReport = await reportsService.createReport({
@@ -269,7 +321,7 @@ export const create = async (req, res) => {
       address,
       image_url,
       ai_analysis,
-      status: status || 'submitted',
+      status: finalStatus,
     });
 
     return res.status(201).json({
@@ -378,7 +430,7 @@ export const reverseGeocode = async (req, res) => {
  */
 export const getById = async (req, res) => {
   try {
-    const report = await reportsService.getReportById(req.params.id);
+    const report = await reportsService.getReportById(req.params.id, req.user || null);
 
     return res.status(200).json({
       status: 'success',
@@ -435,6 +487,54 @@ export const confirmDuplicate = async (req, res) => {
     return res.status(200).json({
       status: 'success',
       message: 'Konfirmasi laporan serupa berhasil dicatat. Skor prioritas diperbarui.',
+      data: updatedReport,
+    });
+  } catch (err) {
+    const statusCode = err.message.includes('tidak ditemukan') ? 404 : 400;
+    return res.status(statusCode).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
+ * GET /api/reports/authorities
+ * Mengambil daftar instansi/dinas tujuan penanganan laporan.
+ */
+export const getAuthorities = async (req, res) => {
+  try {
+    const authorities = await reportsService.getAuthorities();
+    return res.status(200).json({
+      status: 'success',
+      data: authorities,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
+ * POST /api/reports/:id/route
+ * Meneruskan laporan ke instansi/dinas terkait (khusus officer/admin).
+ */
+export const routeReport = async (req, res) => {
+  try {
+    const updatedReport = await reportsService.routeReportToAuthority(
+      req.params.id,
+      req.user.id,
+      {
+        authority_id: req.body?.authority_id || null,
+        notes: req.body?.notes || null,
+      }
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Laporan berhasil diteruskan ke instansi terkait.',
       data: updatedReport,
     });
   } catch (err) {

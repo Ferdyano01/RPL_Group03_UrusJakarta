@@ -17,6 +17,7 @@ export const uploadImage = async (req, res) => {
       }
     });
   } catch (err) {
-    return res.status(500).json({ status: 'error', message: err.message });
+    const statusCode = err.message.includes('signature biner') || err.message.includes('tidak valid') ? 400 : 500;
+    return res.status(statusCode).json({ status: 'error', message: err.message });
   }
 };

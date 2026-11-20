@@ -20,7 +20,10 @@ import {
   formatDateID,
   formatSeverityBadge,
   formatStatusBadge,
+  getAuthToken,
+  getCurrentUser,
   resolveImageUrl,
+  routeReportToAuthorityApi,
   updateReportApi,
 } from '@/services/api';
 
@@ -80,6 +83,16 @@ export function ReportDetailModal({
 
   if (!visible || !report) return null;
 
+  const currentUser = getCurrentUser();
+  const hasToken = Boolean(getAuthToken());
+  const isStaff = Boolean(
+    hasToken && currentUser && (currentUser.role === 'admin' || currentUser.role === 'officer')
+  );
+  const isAdmin = Boolean(hasToken && currentUser && currentUser.role === 'admin');
+  const isOwner = Boolean(hasToken && currentUser && report.user_id === currentUser.id);
+  const canEditContent = isOwner || isStaff;
+  const canDelete = isOwner || isAdmin;
+
   const statusBadge = formatStatusBadge(report.status);
   const severityBadge = formatSeverityBadge(report.severity);
   const imgUri = resolveImageUrl(report.image_url);
@@ -122,6 +135,22 @@ export function ReportDetailModal({
       onUpdated();
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal mengubah status laporan.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRouteToAuthority = async () => {
+    setSaving(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const updated = await routeReportToAuthorityApi(report.id);
+      setReport(updated);
+      setSuccessMsg('Laporan telah diteruskan ke instansi terkait.');
+      onUpdated();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal meneruskan laporan ke instansi.');
     } finally {
       setSaving(false);
     }
@@ -263,7 +292,8 @@ export function ReportDetailModal({
                     <View style={[styles.metaRow, { borderBottomWidth: 0 }]}>
                       <Text style={styles.metaKey}>Pelapor</Text>
                       <Text style={styles.metaVal}>
-                        {report.reporter.full_name} ({report.reporter.email})
+                        {report.reporter.full_name}
+                        {report.reporter.email ? ` (${report.reporter.email})` : ''}
                       </Text>
                     </View>
                   ) : null}
@@ -357,6 +387,23 @@ export function ReportDetailModal({
               </View>
             )}
 
+            {/* Routings to Authority */}
+            {report.report_routings && report.report_routings.length > 0 && (
+              <View style={styles.historyCard}>
+                <Text style={styles.sectionSubHeader}>Penerusan ke Instansi</Text>
+                {report.report_routings.map((rt) => (
+                  <View key={rt.id} style={styles.historyRow}>
+                    <Text style={styles.historyStatus}>
+                      {rt.authority?.name || 'Dinas Bina Marga DKI Jakarta'}
+                      {rt.authority?.region ? ` (${rt.authority.region})` : ''}
+                    </Text>
+                    <Text style={styles.historyNotes}>{rt.notes || '-'}</Text>
+                    <Text style={styles.historyDate}>{formatDateID(rt.routed_at)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Timeline */}
             {report.status_history && report.status_history.length > 0 && (
               <View style={styles.historyCard}>
@@ -381,56 +428,73 @@ export function ReportDetailModal({
             )}
 
             {/* Management Controls */}
-            <View style={styles.actionsCard}>
-              <Text style={styles.sectionSubHeader}>Kelola Status & Laporan</Text>
-              <View style={styles.statusSimulatorRow}>
-                <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: Palette.pending }]}
-                  onPress={() => handleChangeStatus('submitted', 'Menunggu')}
-                  disabled={saving}>
-                  <Text style={styles.simBtnText}>Menunggu</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: Palette.yellow }]}
-                  onPress={() => handleChangeStatus('in_progress', 'Diproses')}
-                  disabled={saving}>
-                  <Text style={styles.simBtnText}>Diproses</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.simBtn, { backgroundColor: Palette.success }]}
-                  onPress={() => handleChangeStatus('fixed', 'Selesai')}
-                  disabled={saving}>
-                  <Text style={styles.simBtnText}>Selesai</Text>
-                </TouchableOpacity>
-              </View>
+            {(isStaff || canEditContent || canDelete) && (
+              <View style={styles.actionsCard}>
+                <Text style={styles.sectionSubHeader}>
+                  {isStaff ? 'Panel Petugas & Kelola Laporan' : 'Kelola Laporan Saya'}
+                </Text>
 
-              <View style={styles.bottomActionRow}>
-                {!isEditing && (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Palette.canvas, flex: 1 }]}
-                    onPress={() => setIsEditing(true)}>
-                    <Text style={styles.actionBtnText}>Edit Laporan</Text>
-                  </TouchableOpacity>
+                {isStaff && (
+                  <>
+                    <View style={styles.statusSimulatorRow}>
+                      <TouchableOpacity
+                        style={[styles.simBtn, { backgroundColor: Palette.pending }]}
+                        onPress={() => handleChangeStatus('submitted', 'Menunggu')}
+                        disabled={saving}>
+                        <Text style={styles.simBtnText}>Menunggu</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.simBtn, { backgroundColor: Palette.yellow }]}
+                        onPress={() => handleChangeStatus('in_progress', 'Diproses')}
+                        disabled={saving}>
+                        <Text style={styles.simBtnText}>Diproses</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.simBtn, { backgroundColor: Palette.success }]}
+                        onPress={() => handleChangeStatus('fixed', 'Selesai')}
+                        disabled={saving}>
+                        <Text style={styles.simBtnText}>Selesai</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: Palette.highlight }]}
+                      onPress={handleRouteToAuthority}
+                      disabled={saving}>
+                      <Text style={styles.actionBtnText}>Teruskan ke Dinas Bina Marga</Text>
+                    </TouchableOpacity>
+                  </>
                 )}
 
-                {!confirmDelete ? (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Palette.danger, flex: 1 }]}
-                    onPress={() => setConfirmDelete(true)}>
-                    <Text style={styles.actionBtnText}>Hapus</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Palette.dangerSolid, flex: 1 }]}
-                    onPress={handleDelete}
-                    disabled={saving}>
-                    <Text style={[styles.actionBtnText, { color: Palette.surface }]}>
-                      Konfirmasi Hapus
-                    </Text>
-                  </TouchableOpacity>
-                )}
+                <View style={styles.bottomActionRow}>
+                  {canEditContent && !isEditing && (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: Palette.canvas, flex: 1 }]}
+                      onPress={() => setIsEditing(true)}>
+                      <Text style={styles.actionBtnText}>Edit Laporan</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {canDelete &&
+                    (!confirmDelete ? (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, { backgroundColor: Palette.danger, flex: 1 }]}
+                        onPress={() => setConfirmDelete(true)}>
+                        <Text style={styles.actionBtnText}>Hapus</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, { backgroundColor: Palette.dangerSolid, flex: 1 }]}
+                        onPress={handleDelete}
+                        disabled={saving}>
+                        <Text style={[styles.actionBtnText, { color: Palette.surface }]}>
+                          Konfirmasi Hapus
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
               </View>
-            </View>
+            )}
 
             <View style={{ height: 24 }} />
           </ScrollView>

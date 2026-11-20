@@ -7,6 +7,24 @@ import {
   setStorageMode,
 } from '../config/localStore.js';
 import { computePriorityAndEffectiveSeverity } from './ai.service.js';
+import {
+  sanitizeSearchKeyword,
+  validateReportUpdateFields,
+} from '../validators/report.validator.js';
+
+const recordSupabaseAuditLog = async ({ userId, action, details }) => {
+  try {
+    await supabaseAdmin.from('audit_logs').insert([
+      {
+        user_id: userId || null,
+        action,
+        details: details || null,
+      },
+    ]);
+  } catch {
+    // Non-blocking
+  }
+};
 
 // Pemetaan tab filter status dari Frontend (riwayat.tsx) ke enum report_status di PostgreSQL
 const STATUS_GROUP_MAP = {
@@ -184,7 +202,6 @@ export const getAllReports = async ({
       reporter:users!reports_user_id_fkey (
         id,
         full_name,
-        email,
         role
       )
     `,
@@ -215,8 +232,9 @@ export const getAllReports = async ({
     query = query.eq('severity', severity.toLowerCase());
   }
 
-  if (search && search.trim() !== '') {
-    const keyword = `%${search.trim()}%`;
+  const safeSearch = sanitizeSearchKeyword(search);
+  if (safeSearch !== '') {
+    const keyword = `%${safeSearch}%`;
     query = query.or(`title.ilike.${keyword},description.ilike.${keyword},address.ilike.${keyword}`);
   }
 
@@ -233,14 +251,19 @@ export const getAllReports = async ({
         }
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
-      const filtered = filterLocalReports(sorted, { status, category, severity, search });
+      const filtered = filterLocalReports(sorted, {
+        status,
+        category,
+        severity,
+        search: safeSearch,
+      });
       const total = filtered.length;
       const paged = filtered.slice(from, to + 1).map((r) => {
         const u = db.users.find((usr) => usr.id === r.user_id);
         return {
           ...r,
           reporter: u
-            ? { id: u.id, full_name: u.full_name, email: u.email, role: u.role }
+            ? { id: u.id, full_name: u.full_name, role: u.role }
             : null,
         };
       });
@@ -344,10 +367,34 @@ export const getReportsByUser = async (userId, { status, page = 1, limit = 20 } 
   };
 };
 
+const sanitizeReporterProfile = (reporter, reportOwnerId, requester = null) => {
+  if (!reporter) return null;
+  const canViewPii = Boolean(
+    requester &&
+      (requester.id === reportOwnerId ||
+        requester.role === 'admin' ||
+        requester.role === 'officer')
+  );
+  if (canViewPii) {
+    return {
+      id: reporter.id,
+      full_name: reporter.full_name,
+      email: reporter.email,
+      phone_number: reporter.phone_number ?? null,
+      role: reporter.role,
+    };
+  }
+  return {
+    id: reporter.id,
+    full_name: reporter.full_name,
+    role: reporter.role,
+  };
+};
+
 /**
  * Mengambil detail lengkap 1 laporan berdasarkan ID beserta riwayat status dan instansi tujuan
  */
-export const getReportById = async (reportId) => {
+export const getReportById = async (reportId, requester = null) => {
   const { data, error } = await supabaseAdmin
     .from('reports')
     .select(
@@ -401,15 +448,7 @@ export const getReportById = async (reportId) => {
       }));
     return {
       ...report,
-      reporter: u
-        ? {
-            id: u.id,
-            full_name: u.full_name,
-            email: u.email,
-            phone_number: u.phone_number,
-            role: u.role,
-          }
-        : null,
+      reporter: sanitizeReporterProfile(u, report.user_id, requester),
       status_history: history,
       report_routings: routings,
     };
@@ -420,7 +459,10 @@ export const getReportById = async (reportId) => {
   }
 
   setStorageMode('supabase');
-  return data;
+  return {
+    ...data,
+    reporter: sanitizeReporterProfile(data.reporter, data.user_id, requester),
+  };
 };
 
 /**
@@ -430,10 +472,23 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
   const existing = await getReportById(reportId);
 
   const isOwner = existing.user_id === userId;
-  const isAdmin = userRole === 'admin' || userRole === 'officer';
+  const isStaff = userRole === 'admin' || userRole === 'officer';
 
-  if (!isOwner && !isAdmin) {
+  if (!isOwner && !isStaff) {
     throw new Error('Anda tidak memiliki akses untuk mengubah laporan ini.');
+  }
+
+  validateReportUpdateFields(updatePayload);
+
+  const requestedStatus =
+    updatePayload.status !== undefined
+      ? String(updatePayload.status).trim().toLowerCase()
+      : undefined;
+
+  if (requestedStatus !== undefined && requestedStatus !== existing.status && !isStaff) {
+    throw new Error(
+      'Anda tidak memiliki akses untuk mengubah status laporan. Hanya petugas atau admin yang berwenang.'
+    );
   }
 
   const allowedFields = [
@@ -451,10 +506,13 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
 
   for (const key of allowedFields) {
     if (updatePayload[key] !== undefined) {
-      updates[key] =
-        key === 'latitude' || key === 'longitude'
-          ? Number(updatePayload[key])
-          : updatePayload[key];
+      if (key === 'latitude' || key === 'longitude') {
+        updates[key] = Number(updatePayload[key]);
+      } else if (key === 'status' || key === 'severity' || key === 'category') {
+        updates[key] = String(updatePayload[key]).trim().toLowerCase();
+      } else {
+        updates[key] = updatePayload[key];
+      }
     }
   }
 
@@ -490,6 +548,13 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
         notes: updatePayload.status_notes || `Status laporan diperbarui menjadi ${updates.status}.`,
         created_at: updates.updated_at,
       });
+      db.audit_logs.push({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        action: 'UPDATE_REPORT_STATUS',
+        details: { report_id: reportId, previous_status: prevStatus, new_status: updates.status },
+        created_at: updates.updated_at,
+      });
     }
     writeLocalDb(db);
     return db.reports[idx];
@@ -509,6 +574,11 @@ export const updateReport = async (reportId, userId, userRole, updatePayload) =>
         notes: updatePayload.status_notes || `Status laporan diperbarui menjadi ${updates.status}.`,
       },
     ]);
+    await recordSupabaseAuditLog({
+      userId,
+      action: 'UPDATE_REPORT_STATUS',
+      details: { report_id: reportId, previous_status: existing.status, new_status: updates.status },
+    });
   }
 
   setStorageMode('supabase');
@@ -620,6 +690,179 @@ export const confirmDuplicateReport = async (reportId, userId, notes = null) => 
 };
 
 /**
+ * Mengambil daftar instansi/dinas terkait yang tersedia untuk penerusan laporan.
+ */
+export const getAuthorities = async () => {
+  const { data, error } = await supabaseAdmin
+    .from('authorities')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    if (shouldFallbackToLocal(error)) {
+      setStorageMode('local_fallback');
+      const db = readLocalDb();
+      return db.authorities || [];
+    }
+    throw new Error(`Gagal mengambil daftar instansi: ${error.message}`);
+  }
+
+  setStorageMode('supabase');
+  return data || [];
+};
+
+/**
+ * Meneruskan tiket laporan ke instansi/dinas terkait (khusus petugas/admin)
+ * dan mencatat routing, status_history, serta audit_logs.
+ */
+export const routeReportToAuthority = async (
+  reportId,
+  actorUserId,
+  { authority_id = null, notes = null } = {}
+) => {
+  const existing = await getReportById(reportId);
+  const authorities = await getAuthorities();
+
+  let targetAuthority = null;
+  if (authority_id) {
+    targetAuthority = authorities.find((a) => a.id === authority_id) || null;
+    if (!targetAuthority) {
+      throw new Error('Instansi tujuan tidak ditemukan.');
+    }
+  } else {
+    targetAuthority = authorities[0] || null;
+    if (!targetAuthority) {
+      // Pastikan Supabase baru tetap memiliki minimal 1 instansi tujuan default
+      const { data: createdAuth, error: createAuthErr } = await supabaseAdmin
+        .from('authorities')
+        .insert([
+          {
+            name: 'Dinas Bina Marga DKI Jakarta',
+            region: 'DKI Jakarta',
+            contact_email: 'binamarga@jakarta.go.id',
+          },
+        ])
+        .select('*')
+        .single();
+      if (!createAuthErr && createdAuth) {
+        targetAuthority = createdAuth;
+      } else {
+        throw new Error('Belum ada data instansi tujuan yang terdaftar.');
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const routingNotes =
+    notes && String(notes).trim()
+      ? String(notes).trim()
+      : `Laporan diteruskan ke ${targetAuthority.name} untuk tindak lanjut lapangan.`;
+  const shouldUpdateStatus = !['routed', 'in_progress', 'fixed', 'closed'].includes(
+    String(existing.status || '').toLowerCase()
+  );
+  const nextStatus = shouldUpdateStatus ? 'routed' : existing.status;
+
+  const { data: routingData, error: routingError } = await supabaseAdmin
+    .from('report_routings')
+    .insert([
+      {
+        report_id: reportId,
+        authority_id: targetAuthority.id,
+        routed_at: now,
+        notes: routingNotes,
+      },
+    ])
+    .select('*')
+    .single();
+
+  if (routingError && shouldFallbackToLocal(routingError)) {
+    setStorageMode('local_fallback');
+    const db = readLocalDb();
+    const idx = db.reports.findIndex((r) => r.id === reportId);
+    if (idx === -1) {
+      throw new Error('Laporan tidak ditemukan.');
+    }
+
+    const newRouting = {
+      id: crypto.randomUUID(),
+      report_id: reportId,
+      authority_id: targetAuthority.id,
+      routed_at: now,
+      notes: routingNotes,
+    };
+    db.report_routings.push(newRouting);
+
+    if (shouldUpdateStatus) {
+      db.reports[idx] = {
+        ...db.reports[idx],
+        status: nextStatus,
+        updated_at: now,
+      };
+    }
+
+    db.status_history.push({
+      id: crypto.randomUUID(),
+      report_id: reportId,
+      changed_by: actorUserId,
+      previous_status: existing.status,
+      new_status: nextStatus,
+      notes: routingNotes,
+      created_at: now,
+    });
+
+    db.audit_logs.push({
+      id: crypto.randomUUID(),
+      user_id: actorUserId,
+      action: 'ROUTE_REPORT',
+      details: {
+        report_id: reportId,
+        authority_id: targetAuthority.id,
+        authority_name: targetAuthority.name,
+      },
+      created_at: now,
+    });
+
+    writeLocalDb(db);
+    return getReportById(reportId);
+  }
+
+  if (routingError) {
+    throw new Error(`Gagal meneruskan laporan ke instansi: ${routingError.message}`);
+  }
+
+  if (shouldUpdateStatus) {
+    await supabaseAdmin
+      .from('reports')
+      .update({ status: nextStatus, updated_at: now })
+      .eq('id', reportId);
+  }
+
+  await supabaseAdmin.from('status_history').insert([
+    {
+      report_id: reportId,
+      changed_by: actorUserId,
+      previous_status: existing.status,
+      new_status: nextStatus,
+      notes: routingNotes,
+    },
+  ]);
+
+  await recordSupabaseAuditLog({
+    userId: actorUserId,
+    action: 'ROUTE_REPORT',
+    details: {
+      report_id: reportId,
+      routing_id: routingData?.id || null,
+      authority_id: targetAuthority.id,
+      authority_name: targetAuthority.name,
+    },
+  });
+
+  setStorageMode('supabase');
+  return getReportById(reportId);
+};
+
+/**
  * Menghapus laporan berdasarkan ID
  */
 export const deleteReport = async (reportId, userId, userRole) => {
@@ -640,6 +883,13 @@ export const deleteReport = async (reportId, userId, userRole) => {
     db.reports = db.reports.filter((r) => r.id !== reportId);
     db.status_history = (db.status_history || []).filter((h) => h.report_id !== reportId);
     db.report_routings = (db.report_routings || []).filter((rt) => rt.report_id !== reportId);
+    db.audit_logs.push({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      action: 'DELETE_REPORT',
+      details: { report_id: reportId },
+      created_at: new Date().toISOString(),
+    });
     writeLocalDb(db);
     return { id: reportId };
   }
@@ -647,6 +897,12 @@ export const deleteReport = async (reportId, userId, userRole) => {
   if (error) {
     throw new Error(`Gagal menghapus laporan: ${error.message}`);
   }
+
+  await recordSupabaseAuditLog({
+    userId,
+    action: 'DELETE_REPORT',
+    details: { report_id: reportId },
+  });
 
   setStorageMode('supabase');
   return { id: reportId };

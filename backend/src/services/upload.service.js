@@ -2,15 +2,16 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabaseAdmin } from '../config/supabaseClient.js';
+import { assertValidImageBuffer } from '../validators/upload.validator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const LOCAL_UPLOADS_DIR = path.resolve(__dirname, '../../uploads');
 
 export const uploadImageToSupabase = async (file) => {
-  // Ambil ekstensi file (misal: jpg, png)
-  const fileExt = (file.originalname?.split('.').pop() || 'jpg').toLowerCase();
-  
+  // Validasi magic bytes biner gambar & tentukan ekstensi/MIME yang terverifikasi
+  const { ext: fileExt, mime: verifiedMime } = assertValidImageBuffer(file);
+
   // Buat nama file yang unik agar tidak bentrok
   const fileName = `report-${Date.now()}-${Math.random().toString(36).substring(2, 10)}.${fileExt}`;
   const filePath = `uploads/${fileName}`; // Path folder di dalam bucket
@@ -20,7 +21,7 @@ export const uploadImageToSupabase = async (file) => {
     const { error } = await supabaseAdmin.storage
       .from('reports')
       .upload(filePath, file.buffer, {
-        contentType: file.mimetype || 'image/jpeg',
+        contentType: verifiedMime,
         upsert: false,
       });
 
@@ -43,7 +44,9 @@ export const uploadImageToSupabase = async (file) => {
     const localFilePath = path.join(LOCAL_UPLOADS_DIR, fileName);
     fs.writeFileSync(localFilePath, file.buffer);
 
-    const baseUrl = process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+    const baseUrl = (
+      process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`
+    ).replace(/\/+$/, '');
     return `${baseUrl}/uploads/${fileName}`;
   }
 };

@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { supabase } from '../config/supabaseClient.js';
+import { supabaseAdmin } from '../config/supabaseClient.js';
+import { getJwtSecret } from '../config/jwt.js';
 import {
   readLocalDb,
   writeLocalDb,
@@ -10,15 +11,13 @@ import {
 } from '../config/localStore.js';
 
 const SALT_ROUNDS = 10;
-const getJwtSecret = () =>
-  (process.env.JWT_SECRET || 'urusjakarta_fallback_secret_2026').trim();
 
 export const registerUser = async ({ email, password, full_name, phone_number, role = 'citizen' }) => {
   const normalizedEmail = email.trim().toLowerCase();
   const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
-  // Simpan data pengguna ke tabel public.users
-  const { data, error } = await supabase
+  // Simpan data pengguna ke tabel public.users menggunakan klien server (bypass RLS)
+  const { data, error } = await supabaseAdmin
     .from('users')
     .insert([
       {
@@ -74,7 +73,7 @@ export const loginUser = async ({ email, password }) => {
   const normalizedEmail = email.trim().toLowerCase();
 
   // Cari pengguna berdasarkan email di tabel public.users
-  let { data: user, error } = await supabase
+  let { data: user, error } = await supabaseAdmin
     .from('users')
     .select('*')
     .eq('email', normalizedEmail)
@@ -119,7 +118,7 @@ export const loginUser = async ({ email, password }) => {
 };
 
 export const getUserById = async (userId) => {
-  const { data: user, error } = await supabase
+  const { data: user, error } = await supabaseAdmin
     .from('users')
     .select('id, email, full_name, role, phone_number, created_at, updated_at')
     .eq('id', userId)
@@ -155,7 +154,7 @@ export const updateUserProfile = async (userId, { full_name, phone_number }) => 
     updates.phone_number = phone_number ? phone_number.trim() : null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from('users')
     .update(updates)
     .eq('id', userId)

@@ -217,6 +217,9 @@ const detectDefaultApiUrl = (): string => {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
   }
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    if (window.location.protocol === 'https:') {
+      return window.location.origin.replace(/\/+$/, '');
+    }
     const hostname = window.location.hostname || 'localhost';
     return `http://${hostname}:5000`;
   }
@@ -617,6 +620,20 @@ export const deleteReportApi = async (id: string) => {
   return apiRequest<{ status: string; message: string }>(`/api/reports/${id}`, {
     method: 'DELETE',
   });
+};
+
+export const routeReportToAuthorityApi = async (
+  id: string,
+  payload?: { authority_id?: string; notes?: string }
+): Promise<ReportItem> => {
+  const res = await apiRequest<{ status: string; data: ReportItem }>(
+    `/api/reports/${id}/route`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    }
+  );
+  return res.data;
 };
 
 export const formatStatusBadge = (status: string) => {

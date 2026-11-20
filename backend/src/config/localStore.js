@@ -313,6 +313,7 @@ const createInitialSeed = () => {
         notes: 'Prioritas tinggi - penanganan lubang jalan arteri Jakarta Timur.',
       },
     ],
+    audit_logs: [],
   };
 };
 
@@ -327,7 +328,11 @@ export const readLocalDb = () => {
       return seed;
     }
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.audit_logs)) parsed.audit_logs = [];
+    if (!Array.isArray(parsed.report_routings)) parsed.report_routings = [];
+    if (!Array.isArray(parsed.authorities)) parsed.authorities = createInitialSeed().authorities;
+    return parsed;
   } catch (err) {
     console.warn('[LocalStore] Gagal membaca local-db.json, membuat ulang seed:', err.message);
     return createInitialSeed();
@@ -338,6 +343,8 @@ export const writeLocalDb = (dbData) => {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
+  const tmpFile = `${DB_FILE}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(dbData, null, 2), 'utf-8');
+  fs.renameSync(tmpFile, DB_FILE);
 };
 
