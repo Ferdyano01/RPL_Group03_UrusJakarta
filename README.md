@@ -1,33 +1,42 @@
-# UrusJakarta Installation & Running Guide
+# UrusJakarta — Installation & Quick Start Guide
 
-This guide covers step-by-step instructions to install and run the entire **UrusJakarta** ecosystem (**Road-AI FastAPI**, **Backend Express API**, and **Frontend Expo Web**) on both **Windows** and **Linux / macOS / WSL** environments.
+Welcome to the **UrusJakarta** repository! This documentation provides complete instructions for developers, contributors, and evaluators to set up and run the entire **UrusJakarta** ecosystem (**Road-AI FastAPI**, **Backend Express API**, and **Frontend Expo Web**) locally on **Windows** or **Linux / macOS / WSL**.
 
 ---
 
 ## System Prerequisites
 
-Ensure the following software tools are installed on your machine before getting started:
+Before cloning and running the project, ensure the following tools are installed on your system:
 
-* **Git**
-* **Node.js** (LTS version recommended) & **npm**
-* **Python 3.9+** & `venv`
-* **Visual Studio Code** (optional, recommended)
+* **Git** — [Download Git](https://git-scm.com/)
+* **Node.js (LTS recommended) & npm** — [Download Node.js](https://nodejs.org/)
+* **Python 3.9+ & `venv`** — [Download Python](https://www.python.org/)
+* **Code Editor** (e.g., [Visual Studio Code](https://code.visualstudio.com/), optional)
 
 ---
 
-## Version 1: Windows Environment (PowerShell)
+## Step 1: Clone the Repository
 
-### 1. Clone Repository & Initial Setup (One-Time Setup)
+Open your terminal (PowerShell on Windows, or Bash/Zsh on Linux/macOS) and clone the project repository:
 
-Open a terminal (**PowerShell** or **VS Code Integrated Terminal**) in the directory where you want to store the project, then run the following commands sequentially:
+```bash
+git clone https://github.com/Ferdyano01/RPL_Group03_UrusJakarta.git
+cd RPL_Group03_UrusJakarta
+```
 
-1. **Clone the repository and navigate into the project folder:**
-   ```powershell
-   git clone https://github.com/Ferdyano01/RPL_Group03_UrusJakarta.git
-   cd RPL_Group03_UrusJakarta
-   ```
+:::info
+**Environment Variables:** Check the `backend/`, `frontend/`, and `road-ai/` directories for any `.env.example` template files. If present, duplicate them as `.env` and fill in the required local credentials or API keys before starting the servers.
+:::
 
-2. **Install Road-AI dependencies (Python):**
+---
+
+## Option A: Windows Environment (PowerShell)
+
+### 1. Install Dependencies (One-Time Setup)
+
+Run the following commands in **PowerShell** from the project root directory (`RPL_Group03_UrusJakarta`) to install dependencies for all three services:
+
+1. **Road-AI Service (Python):**
    ```powershell
    cd road-ai
    python -m venv .venv
@@ -37,76 +46,66 @@ Open a terminal (**PowerShell** or **VS Code Integrated Terminal**) in the direc
    cd ..
    ```
 
-3. **Install Backend dependencies (Node.js):**
+2. **Backend API (Node.js):**
    ```powershell
    cd backend
    npm install
    cd ..
    ```
 
-4. **Install Frontend dependencies (Expo):**
+3. **Frontend Web App (Expo):**
    ```powershell
    cd frontend
    npm install --legacy-peer-deps
    cd ..
    ```
 
-:::info
-**Note:** If there is an `.env.example` file inside the `backend`, `frontend`, or `road-ai` directories, duplicate and rename it to `.env`, then adjust the environment variables according to your local configuration.
-:::
+### 2. Configure the Windows Startup Script
 
-### 2. Create Automated Windows Startup Script (`start-win.ps1`)
-
-Create a new file named **`start-win.ps1`** in the root directory (`RPL_Group03_UrusJakarta`), and paste the following PowerShell script into it:
+The default `start-all.sh` script is designed for Unix-based shells. To launch all services with a single command on Windows, create a file named **`start-win.ps1`** in the root directory (`RPL_Group03_UrusJakarta`) with the following content:
 
 ```powershell
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Running UrusJakarta Ecosystem (AI + Backend + Frontend)" -ForegroundColor Cyan
+Write-Host " Starting UrusJakarta Ecosystem (AI + Backend + Frontend)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
 # 1. Start Road-AI in a new PowerShell window
-Write-Host "[1/3] Starting Road-AI server (Port 8000)..." -ForegroundColor Green
+Write-Host "[1/3] Launching Road-AI server (Port 8000)..." -ForegroundColor Green
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\road-ai'; `$env:MODEL_PATH='models/trained/road_damage_v1_best.pt'; .\.venv\Scripts\uvicorn backend.main:app --host 0.0.0.0 --port 8000"
 
 # 2. Start Backend Express in a new PowerShell window
-Write-Host "[2/3] Starting Backend API server (Port 5000)..." -ForegroundColor Green
+Write-Host "[2/3] Launching Backend API server (Port 5000)..." -ForegroundColor Green
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend'; node src/server.js"
 
-# Wait 2 seconds to ensure backend initialization
+# Wait 2 seconds to allow backend initialization
 Start-Sleep -Seconds 2
 
-# 3. Start Frontend Expo in the main VS Code terminal
-Write-Host "[3/3] Starting Frontend Expo (Port 8081)..." -ForegroundColor Green
+# 3. Start Frontend Expo in the current terminal
+Write-Host "[3/3] Launching Frontend Expo Web (Port 8081)..." -ForegroundColor Green
 Set-Location "$PSScriptRoot\frontend"
 npx expo start --web
 ```
 
-### 3. Run the Application on Windows
+### 3. Run the Application
 
-Whenever you want to launch the application, open a terminal in the root directory (`RPL_Group03_UrusJakarta`) and execute this single command:
+From the root directory (`RPL_Group03_UrusJakarta`), execute:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start-win.ps1
 ```
 
-* **Expected Result:** Two new PowerShell windows will automatically open to run **Road-AI** (`http://localhost:8000`) and **Backend** (`http://localhost:5000`), while the main terminal starts **Frontend** (`http://localhost:8081`) and opens your web browser automatically.
-* **Stopping the Application:** Press `Ctrl + C` in the main VS Code terminal, then close the two secondary PowerShell windows.
+* **What Happens Next:** Two separate PowerShell windows will open for **Road-AI** (`http://localhost:8000`) and **Backend** (`http://localhost:5000`), while your primary terminal compiles **Frontend** (`http://localhost:8081`) and opens it in your default browser.
+* **To Stop:** Press `Ctrl + C` in the primary terminal, then close the two secondary PowerShell windows.
 
 ---
 
-## Version 2: Linux / macOS / WSL Environment (Bash)
+## Option B: Linux / macOS / WSL Environment (Bash)
 
-### 1. Clone Repository & Initial Setup (One-Time Setup)
+### 1. Install Dependencies (One-Time Setup)
 
-Open a Bash terminal in your workspace directory and run the following commands:
+Run the following commands in your **Bash/Zsh** terminal from the project root directory (`RPL_Group03_UrusJakarta`):
 
-1. **Clone the repository and navigate into the project folder:**
-   ```bash
-   git clone https://github.com/Ferdyano01/RPL_Group03_UrusJakarta.git
-   cd RPL_Group03_UrusJakarta
-   ```
-
-2. **Install Road-AI dependencies (Python):**
+1. **Road-AI Service (Python):**
    ```bash
    cd road-ai
    python3 -m venv .venv
@@ -116,50 +115,52 @@ Open a Bash terminal in your workspace directory and run the following commands:
    cd ..
    ```
 
-3. **Install Backend dependencies (Node.js):**
+2. **Backend API (Node.js):**
    ```bash
    cd backend
    npm install
    cd ..
    ```
 
-4. **Install Frontend dependencies (Expo):**
+3. **Frontend Web App (Expo):**
    ```bash
    cd frontend
    npm install --legacy-peer-deps
    cd ..
    ```
 
-5. **Grant execution permissions to the default startup script (`start-all.sh`):**
+4. **Make the startup script executable:**
    ```bash
    chmod +x start-all.sh
    ```
 
 :::warning
-**Line-Ending Check:** If `start-all.sh` was previously edited or cloned on Windows, ensure its line endings use **LF** instead of **CRLF** by running:
+**Troubleshooting Line Endings:** If you cloned or edited the repository on a Windows filesystem (e.g., via WSL), convert `start-all.sh` line endings from CRLF to LF before running:
 ```bash
 sed -i 's/\r$//' start-all.sh
 ```
 :::
 
-### 2. Run the Application on Linux / macOS / WSL
+### 2. Run the Application
 
-To launch all services simultaneously within a single terminal session, run the default start command from the root directory (`RPL_Group03_UrusJakarta`):
+Start all three services concurrently in a single terminal session from the project root (`RPL_Group03_UrusJakarta`):
 
 ```bash
 npm start
 ```
-*(Alternatively, you can run `./start-all.sh`)*
+*(Alternatively, execute `./start-all.sh` directly).*
 
-* **Expected Result:** **Road-AI** (`http://localhost:8000`), **Backend** (`http://localhost:5000`), and **Frontend** (`http://localhost:8081`) will run concurrently in the background within a single terminal session. If the browser does not open automatically, press **`w`** in the terminal.
-* **Stopping the Application:** Press **`Ctrl + C`** once in the terminal; the built-in `cleanup()` trap inside `start-all.sh` will automatically terminate all background processes.
+* **What Happens Next:** **Road-AI** (`http://localhost:8000`), **Backend** (`http://localhost:5000`), and **Frontend** (`http://localhost:8081`) will launch in parallel. If the web browser does not open automatically, press **`w`** in the terminal.
+* **To Stop:** Press **`Ctrl + C`** once in the terminal; the built-in cleanup handler will automatically terminate all background services.
 
 ---
 
-## Service Ports Summary
+## Architecture & Local Endpoints
 
-| Service | Technology Stack | Local URL |
-| :--- | :--- | :--- |
-| **Road-AI Service** | Python / FastAPI (YOLO) | `http://localhost:8000` |
-| **Backend API** | Node.js / Express | `http://localhost:5000` |
-| **Frontend Web** | React Native / Expo Web | `http://localhost:8081` |
+Once all services are running, you can verify each component using the endpoints below:
+
+| Service | Tech Stack | Local Endpoint | Description |
+| :--- | :--- | :--- | :--- |
+| **Road-AI Service** | Python, FastAPI, YOLO | `http://localhost:8000` | Road damage detection inference API (`/health`, `/docs`) |
+| **Backend API** | Node.js, Express | `http://localhost:5000` | Core REST API and business logic |
+| **Frontend Web** | React Native, Expo Web | `http://localhost:8081` | User interface accessible via web browser |
