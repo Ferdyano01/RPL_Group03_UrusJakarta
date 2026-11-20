@@ -1,26 +1,48 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Editorial Neobrutalisme design tokens for UrusJakarta.
  */
 
 import '@/global.css';
 
 import { Platform } from 'react-native';
 
+export const Palette = {
+  canvas: '#F4F1EA',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F9FAFB',
+  highlight: '#FFFBEB',
+  ink: '#111827',
+  inkMuted: '#4B5563',
+  inkSubtle: '#6B7280',
+  accent: '#FF5E00',
+  accentText: '#FFFFFF',
+  yellow: '#FDE047',
+  warning: '#FACC15',
+  pending: '#FDBA74',
+  success: '#86EFAC',
+  lime: '#D9F99D',
+  danger: '#FCA5A5',
+  dangerSolid: '#DC2626',
+} as const;
+
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: Palette.ink,
+    background: Palette.canvas,
+    backgroundElement: Palette.surface,
+    backgroundSelected: Palette.yellow,
+    textSecondary: Palette.inkMuted,
+    border: Palette.ink,
+    accent: Palette.accent,
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: Palette.ink,
+    background: Palette.canvas,
+    backgroundElement: Palette.surface,
+    backgroundSelected: Palette.yellow,
+    textSecondary: Palette.inkMuted,
+    border: Palette.ink,
+    accent: Palette.accent,
   },
 } as const;
 
@@ -28,13 +50,9 @@ export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
@@ -61,5 +79,29 @@ export const Spacing = {
   six: 64,
 } as const;
 
+export const BrutalShadow = {
+  sm: {
+    shadowColor: Palette.ink,
+    shadowOffset: { width: 2, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 0,
+    elevation: 2,
+  },
+  md: {
+    shadowColor: Palette.ink,
+    shadowOffset: { width: 4, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 0,
+    elevation: 4,
+  },
+  lg: {
+    shadowColor: Palette.ink,
+    shadowOffset: { width: 6, height: 6 },
+    shadowOpacity: 1,
+    shadowRadius: 0,
+    elevation: 6,
+  },
+} as const;
+
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+export const MaxContentWidth = 720;

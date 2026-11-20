@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--batch", type=int, default=4, help="Batch size")
     parser.add_argument("--device", type=str, default="0", help="Device")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.15, help="Confidence threshold")
     parser.add_argument(
         "--iou",
         type=float,

@@ -43,4 +43,7 @@ example
 /ios
 /android
 
+# private folders
 internal
+.vscode/
+documentation

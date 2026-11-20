@@ -1,180 +1,353 @@
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ExternalLink } from '@/components/external-link';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { BottomNav } from '@/components/bottom-nav';
 import { Collapsible } from '@/components/ui/collapsible';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
+import { getAuthToken } from '@/services/api';
 
-export default function TabTwoScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
-  const theme = useTheme();
+const SEVERITIES = [
+  {
+    label: 'Ringan',
+    bg: Palette.lime,
+    text: Palette.ink,
+    note: 'Kerusakan kecil permukaan aspal dan belum menghambat lajur utama.',
+  },
+  {
+    label: 'Sedang',
+    bg: Palette.yellow,
+    text: Palette.ink,
+    note: 'Membutuhkan perbaikan terjadwal dalam beberapa hari.',
+  },
+  {
+    label: 'Parah',
+    bg: Palette.accent,
+    text: Palette.accentText,
+    note: 'Lubang dalam atau rusak berat yang berisiko membahayakan pengendara.',
+  },
+];
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
+const STATUS_ITEMS = [
+  {
+    label: 'Menunggu',
+    bg: Palette.surface,
+    desc: 'Laporan sudah masuk dan menunggu verifikasi petugas.',
+  },
+  {
+    label: 'Perlu Tinjauan',
+    bg: Palette.pending,
+    desc: 'Laporan membutuhkan konfirmasi tambahan dari moderator.',
+  },
+  {
+    label: 'Diproses',
+    bg: Palette.yellow,
+    desc: 'Laporan diteruskan ke dinas terkait dan sedang ditindaklanjuti.',
+  },
+  {
+    label: 'Selesai',
+    bg: Palette.success,
+    desc: 'Perbaikan jalan di lapangan telah diselesaikan.',
+  },
+  {
+    label: 'Ditolak',
+    bg: Palette.danger,
+    desc: 'Laporan tidak valid, duplikat, atau di luar cakupan wilayah layanan.',
+  },
+];
+
+export default function ExploreScreen() {
+  const router = useRouter();
+  const isAuthenticated = Boolean(getAuthToken());
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Explore</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
-          </ThemedText>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
+          {/* Top Bar */}
+          <View style={styles.topBar}>
+            <View style={styles.brandRow}>
+              <View style={styles.brandMark}>
+                <Text style={styles.brandMarkText}>UJ</Text>
+              </View>
+              <View>
+                <Text style={styles.brandName}>UrusJakarta</Text>
+                <Text style={styles.brandSub}>Panduan Pelaporan Jalan Rusak</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => router.push('/beranda')}
+              style={styles.backBtn}>
+              <Text style={styles.backBtnText}>Beranda</Text>
+            </TouchableOpacity>
+          </View>
 
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
-            </Pressable>
-          </ExternalLink>
-        </ThemedView>
+          {/* Hero Card */}
+          <View style={styles.heroCard}>
+            <View style={styles.heroTag}>
+              <Text style={styles.heroTagText}>PANDUAN PENGGUNA</Text>
+            </View>
+            <Text style={styles.heroTitle}>Cara Melaporkan Kerusakan Jalan</Text>
+            <Text style={styles.heroDesc}>
+              Pelajari alur pemeriksaan foto otomatis, tips pengambilan gambar, serta arti status
+              penanganan agar laporan kerusakan jalan Anda diproses lebih cepat.
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() =>
+                router.push((isAuthenticated ? '/lapor' : '/signup?mode=signup') as any)
+              }
+              style={styles.primaryCta}>
+              <Text style={styles.primaryCtaText}>
+                {isAuthenticated ? 'Buat Laporan Jalan' : 'Daftar untuk Melapor'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-        <ThemedView style={styles.sectionsWrapper}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/explore.tsx</ThemedText>
-            </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+          {/* Alur Verifikasi */}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>Alur Pemeriksaan Otomatis</Text>
+            <View style={styles.stack}>
+              <Collapsible tag="Tahap 1" title="Deteksi Titik Kerusakan pada Foto" defaultOpen>
+                <Text style={styles.bodyText}>
+                  Sistem memindai foto jalan yang Anda unggah untuk menandai area lubang, retakan,
+                  atau pengelupasan aspal beserta tingkat keyakinan deteksinya.
+                </Text>
+              </Collapsible>
 
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
-              </ThemedText>
-              <Image
-                source={require('@/assets/images/tutorial-web.png')}
-                style={styles.imageTutorial}
-              />
-            </ThemedView>
-          </Collapsible>
+              <Collapsible tag="Tahap 2" title="Penyusunan Draf dan Estimasi Keparahan">
+                <Text style={styles.bodyText}>
+                  Hasil deteksi dipadukan dengan catatan lokasi Anda untuk membentuk judul singkat,
+                  deskripsi, dan rekomendasi tingkat keparahan yang tetap dapat Anda edit sebelum
+                  dikirim.
+                </Text>
+              </Collapsible>
 
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/react-logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+              <Collapsible tag="Tips" title="Tips Mengambil Foto Jalan yang Jelas">
+                <Text style={styles.bodyText}>
+                  Ambil gambar pada pencahayaan cukup, posisikan kerusakan jalan di tengah bingkai,
+                  dan sertakan nama jalan atau patokan terdekat agar petugas mudah menemukan titik
+                  lokasi.
+                </Text>
+              </Collapsible>
+            </View>
+          </View>
 
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+          {/* Legenda */}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>Skala Keparahan & Status Laporan</Text>
+            <View style={styles.legendCard}>
+              <Text style={styles.legendLabel}>Tingkat Keparahan</Text>
+              <View style={styles.legendList}>
+                {SEVERITIES.map((sev) => (
+                  <View key={sev.label} style={styles.legendRow}>
+                    <View style={[styles.pillBadge, { backgroundColor: sev.bg }]}>
+                      <Text style={[styles.pillText, { color: sev.text }]}>{sev.label}</Text>
+                    </View>
+                    <Text style={styles.legendNote}>{sev.note}</Text>
+                  </View>
+                ))}
+              </View>
 
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-        {Platform.OS === 'web' && <WebBadge />}
-      </ThemedView>
-    </ScrollView>
+              <View style={styles.legendDivider} />
+
+              <Text style={styles.legendLabel}>Status Penanganan</Text>
+              <View style={styles.legendList}>
+                {STATUS_ITEMS.map((st) => (
+                  <View key={st.label} style={styles.legendRow}>
+                    <View style={[styles.pillBadge, { backgroundColor: st.bg }]}>
+                      <Text style={styles.pillText}>{st.label}</Text>
+                    </View>
+                    <Text style={styles.legendNote}>{st.desc}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+
+      <BottomNav active="beranda" />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
+  safeArea: {
     flex: 1,
+    backgroundColor: Palette.canvas,
   },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 92,
+    alignItems: 'center',
   },
   container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
-    justifyContent: 'center',
-    gap: Spacing.one,
-    alignItems: 'center',
-  },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  collapsibleContent: {
-    alignItems: 'center',
-  },
-  imageTutorial: {
     width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.two,
+    maxWidth: MaxContentWidth,
+    gap: 18,
   },
-  imageReact: {
-    width: 100,
-    height: 100,
-    alignSelf: 'center',
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    ...BrutalShadow.md,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandMark: {
+    width: 36,
+    height: 36,
+    backgroundColor: Palette.accent,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandMarkText: {
+    color: Palette.accentText,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  brandName: {
+    color: Palette.ink,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  brandSub: {
+    color: Palette.inkMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  backBtn: {
+    backgroundColor: Palette.yellow,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    ...BrutalShadow.sm,
+  },
+  backBtnText: {
+    color: Palette.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  heroCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2.5,
+    borderColor: Palette.ink,
+    padding: 18,
+    gap: 10,
+    ...BrutalShadow.lg,
+  },
+  heroTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.ink,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  heroTagText: {
+    color: Palette.yellow,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  heroTitle: {
+    color: Palette.ink,
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
+  heroDesc: {
+    color: Palette.inkMuted,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  primaryCta: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.accent,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    marginTop: 4,
+    ...BrutalShadow.sm,
+  },
+  primaryCtaText: {
+    color: Palette.accentText,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  sectionBlock: {
+    gap: 10,
+  },
+  sectionTitle: {
+    color: Palette.ink,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  stack: {
+    gap: 10,
+  },
+  bodyText: {
+    color: Palette.ink,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  legendCard: {
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    padding: 16,
+    gap: 12,
+    ...BrutalShadow.md,
+  },
+  legendLabel: {
+    color: Palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  legendList: {
+    gap: 10,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pillBadge: {
+    minWidth: 104,
+    borderWidth: 1.5,
+    borderColor: Palette.ink,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  pillText: {
+    color: Palette.ink,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  legendNote: {
+    flex: 1,
+    color: Palette.inkMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  legendDivider: {
+    height: 2,
+    backgroundColor: Palette.ink,
+    marginVertical: 2,
   },
 });

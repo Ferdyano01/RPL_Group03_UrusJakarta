@@ -1,5 +1,5 @@
 # YOLO detection dataset converted from Pascal VOC XML
-path: C:/Users/Jonathan Christopher/Documents/RPL/road-ai/datasets/road_damage
+path: .
 train: images/train
 val: images/val
 test: images/test

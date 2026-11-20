@@ -1,6 +1,5 @@
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET;
+import { getJwtSecret } from '../config/jwt.js';
 
 export const requireAuth = (req, res, next) => {
   try {
@@ -12,7 +11,7 @@ export const requireAuth = (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     // Verifikasi token JWT
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     
     // Melampirkan data payload user ke objek req
     req.user = decoded; // Berisi { id, email, role, full_name }
@@ -21,6 +20,25 @@ export const requireAuth = (req, res, next) => {
   } catch (err) {
     return res.status(401).json({ status: 'error', message: 'Token tidak valid atau telah kadaluwarsa.' });
   }
+};
+
+/**
+ * Middleware opsional: melampirkan req.user bila token Bearer valid tersedia,
+ * tetapi tetap mengizinkan akses anonim pada endpoint publik.
+ */
+export const optionalAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      req.user = jwt.verify(token, getJwtSecret());
+    } catch {
+      req.user = null;
+    }
+  } else {
+    req.user = null;
+  }
+  next();
 };
 
 export const requireRole = (allowedRoles) => {

@@ -1,6 +1,54 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import * as reportsService from '../services/reports.service.js';
-import { analyzeReportSubmission } from '../services/ai.service.js';
+import {
+  analyzeReportSubmission,
+  computePriorityAndEffectiveSeverity,
+} from '../services/ai.service.js';
+import {
+  evaluateLocationAndDuplicates,
+  reverseGeocodeCoordinates,
+} from '../services/locationIntelligence.service.js';
 import { uploadImageToSupabase } from '../services/upload.service.js';
+import {
+  VALID_REPORT_CATEGORIES,
+  VALID_REPORT_SEVERITIES,
+  VALID_REPORT_STATUSES,
+  sanitizeReportImageUrl,
+  validateCoordinates,
+} from '../validators/report.validator.js';
+import { assertValidImageBuffer } from '../validators/upload.validator.js';
+
+const CITIZEN_ALLOWED_INITIAL_STATUSES = new Set(['draft', 'submitted', 'pending_review']);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SAMPLES_DIR = path.resolve(__dirname, '../../../road-ai/samples/input');
+
+const resolveInputFile = (req) => {
+  if (req.file) {
+    return req.file;
+  }
+  const sampleName = req.body?.sample_image;
+  if (sampleName && typeof sampleName === 'string') {
+    const safeName = path.basename(sampleName);
+    const fullPath = path.join(SAMPLES_DIR, safeName);
+    if (fs.existsSync(fullPath)) {
+      const ext = path.extname(safeName).toLowerCase();
+      const mimetype =
+        ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      return {
+        buffer: fs.readFileSync(fullPath),
+        originalname: safeName,
+        mimetype,
+        isSample: true,
+        sampleUrl: `/samples/${safeName}`,
+      };
+    }
+  }
+  return null;
+};
 
 /**
  * POST /api/reports/analyze
@@ -10,42 +58,58 @@ import { uploadImageToSupabase } from '../services/upload.service.js';
 export const analyzeDraft = async (req, res) => {
   try {
     const { description, latitude, longitude, address, upload_image } = req.body;
+    const inputFile = resolveInputFile(req);
 
-    if (!req.file && !description) {
+    if (!inputFile && !description) {
       return res.status(400).json({
         status: 'error',
-        message: 'Harap lampirkan foto kerusakan jalan (field "image") atau deskripsi laporan.',
+        message: 'Harap lampirkan foto kerusakan jalan (field "image" atau "sample_image") atau deskripsi laporan.',
       });
     }
 
-    const lat = latitude !== undefined && latitude !== '' ? Number(latitude) : -6.2088;
-    const lng = longitude !== undefined && longitude !== '' ? Number(longitude) : 106.8456;
-
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Koordinat latitude dan longitude harus berupa angka yang valid.',
-      });
+    if (req.file) {
+      try {
+        assertValidImageBuffer(req.file);
+      } catch (imgErr) {
+        return res.status(400).json({
+          status: 'error',
+          message: imgErr.message,
+        });
+      }
     }
 
-    // Jalankan analisis AI (YOLO Vision + Generator Draf Naratif LLM/Template)
+    let coords;
+    try {
+      coords = validateCoordinates(latitude, longitude, { required: false });
+    } catch (coordErr) {
+      return res.status(400).json({
+        status: 'error',
+        message: coordErr.message,
+      });
+    }
+    const { latitude: lat, longitude: lng } = coords;
+
+    const existingReports = await reportsService.getReportsForSpatialAnalysis();
+
+    // Jalankan analisis AI (YOLO Vision + Lokasi Strategis + Deteksi Duplikat + LLM/Template)
     const analysisResult = await analyzeReportSubmission({
-      fileBuffer: req.file?.buffer,
-      originalname: req.file?.originalname,
-      mimetype: req.file?.mimetype,
+      fileBuffer: inputFile?.buffer,
+      originalname: inputFile?.originalname,
+      mimetype: inputFile?.mimetype,
       userDescription: description || '',
       latitude: lat,
       longitude: lng,
       address: address || '',
+      existingReports,
     });
 
     // Opsional: Unggah gambar ke Supabase Storage kecuali upload_image bernilai 'false'
-    let imageUrl = req.body.image_url || null;
+    let imageUrl = req.body.image_url || inputFile?.sampleUrl || null;
     let uploadWarning = null;
 
-    if (req.file && upload_image !== 'false') {
+    if (inputFile && !inputFile.isSample && upload_image !== 'false') {
       try {
-        imageUrl = await uploadImageToSupabase(req.file);
+        imageUrl = await uploadImageToSupabase(inputFile);
       } catch (uploadErr) {
         uploadWarning = uploadErr.message;
         console.warn('[Reports Controller] Peringatan unggah gambar saat analisis draf:', uploadErr.message);
@@ -61,6 +125,13 @@ export const analyzeDraft = async (req, res) => {
           description: analysisResult.description,
           category: analysisResult.category,
           severity: analysisResult.severity,
+          visual_severity: analysisResult.visual_severity,
+          severity_adjusted: analysisResult.severity_adjusted,
+          severity_adjustment_reason: analysisResult.severity_adjustment_reason,
+          strategic_score: analysisResult.strategic_score,
+          priority_score: analysisResult.priority_score,
+          location_context: analysisResult.location_context,
+          possible_duplicates: analysisResult.possible_duplicates,
           latitude: lat,
           longitude: lng,
           address: address || null,
@@ -99,22 +170,9 @@ export const create = async (req, res) => {
       status,
     } = req.body;
 
-    if (latitude === undefined || longitude === undefined || latitude === '' || longitude === '') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Koordinat lokasi (latitude dan longitude) wajib diisi.',
-      });
-    }
-
-    const lat = Number(latitude);
-    const lng = Number(longitude);
-
-    if (Number.isNaN(lat) || Number.isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Koordinat latitude (-90 s/d 90) atau longitude (-180 s/d 180) tidak valid.',
-      });
-    }
+    const { latitude: lat, longitude: lng } = validateCoordinates(latitude, longitude, {
+      required: true,
+    });
 
     // Jika ai_analysis dikirim sebagai string JSON pada multipart/form-data, parse terlebih dahulu
     if (typeof ai_analysis === 'string' && ai_analysis.trim() !== '') {
@@ -125,22 +183,60 @@ export const create = async (req, res) => {
       }
     }
 
-    // Jika pengguna mengirim file gambar langsung ke POST /api/reports
+    const inputFile = resolveInputFile(req);
     if (req.file) {
+      assertValidImageBuffer(req.file);
+    }
+
+    if (category !== undefined && category !== '') {
+      const normalizedCat = String(category).trim().toLowerCase();
+      if (!VALID_REPORT_CATEGORIES.includes(normalizedCat)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Kategori kerusakan tidak valid: ${category}.`,
+        });
+      }
+      category = normalizedCat;
+    }
+
+    if (severity !== undefined && severity !== '') {
+      const normalizedSev = String(severity).trim().toLowerCase();
+      if (!VALID_REPORT_SEVERITIES.includes(normalizedSev)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Tingkat keparahan tidak valid: ${severity}.`,
+        });
+      }
+      severity = normalizedSev;
+    }
+
+    if (image_url !== undefined) {
+      image_url = sanitizeReportImageUrl(image_url);
+    }
+
+    const existingReports = await reportsService.getReportsForSpatialAnalysis();
+
+    // Jika pengguna mengirim file gambar langsung ke POST /api/reports
+    if (inputFile) {
       if (!image_url) {
-        image_url = await uploadImageToSupabase(req.file);
+        if (inputFile.isSample) {
+          image_url = inputFile.sampleUrl;
+        } else {
+          image_url = await uploadImageToSupabase(inputFile);
+        }
       }
 
       // Jalankan analisis AI secara otomatis apabila belum ada hasil ai_analysis dari tahap draf
       if (!ai_analysis) {
         const autoAnalysis = await analyzeReportSubmission({
-          fileBuffer: req.file.buffer,
-          originalname: req.file.originalname,
-          mimetype: req.file.mimetype,
+          fileBuffer: inputFile.buffer,
+          originalname: inputFile.originalname,
+          mimetype: inputFile.mimetype,
           userDescription: description || '',
           latitude: lat,
           longitude: lng,
           address: address || '',
+          existingReports,
         });
 
         title = title || autoAnalysis.title;
@@ -158,6 +254,7 @@ export const create = async (req, res) => {
         latitude: lat,
         longitude: lng,
         address: address || '',
+        existingReports,
       });
 
       title = title || textAnalysis.title;
@@ -166,6 +263,51 @@ export const create = async (req, res) => {
       severity = severity || textAnalysis.severity;
       status = status || textAnalysis.suggested_status;
       ai_analysis = textAnalysis.ai_analysis;
+    }
+
+    // Selalu hitung ulang skor strategis & skor prioritas di server agar klien tidak bisa memalsukan priority_score/support_count
+    if (ai_analysis && typeof ai_analysis === 'object') {
+      const locEval = await evaluateLocationAndDuplicates({
+        latitude: lat,
+        longitude: lng,
+        address: address || '',
+        userDescription: description || '',
+        category: category || 'pothole',
+        existingReports,
+      });
+      const visualSeverity = ['low', 'medium', 'high'].includes(ai_analysis.visual_severity)
+        ? ai_analysis.visual_severity
+        : severity || 'medium';
+      const priorityInfo = computePriorityAndEffectiveSeverity({
+        category: category || 'pothole',
+        visualSeverity,
+        locationContext: locEval.location_context,
+        supportCount: 1,
+      });
+      severity = severity || priorityInfo.effective_severity;
+      ai_analysis = {
+        ...ai_analysis,
+        ...priorityInfo,
+        location_context: locEval.location_context,
+        possible_duplicates: locEval.possible_duplicates,
+        support_count: 1,
+      };
+    }
+
+    if (req.body.duplicate_of && ai_analysis && typeof ai_analysis === 'object') {
+      ai_analysis = {
+        ...ai_analysis,
+        duplicate_of: req.body.duplicate_of,
+      };
+    }
+
+    const isStaff = req.user?.role === 'admin' || req.user?.role === 'officer';
+    let finalStatus = (status || 'submitted').toLowerCase();
+    if (!VALID_REPORT_STATUSES.includes(finalStatus)) {
+      finalStatus = 'submitted';
+    }
+    if (!isStaff && !CITIZEN_ALLOWED_INITIAL_STATUSES.has(finalStatus)) {
+      finalStatus = 'submitted';
     }
 
     const newReport = await reportsService.createReport({
@@ -179,7 +321,7 @@ export const create = async (req, res) => {
       address,
       image_url,
       ai_analysis,
-      status: status || 'submitted',
+      status: finalStatus,
     });
 
     return res.status(201).json({
@@ -201,12 +343,13 @@ export const create = async (req, res) => {
  */
 export const getAll = async (req, res) => {
   try {
-    const { status, category, severity, search, page, limit } = req.query;
+    const { status, category, severity, search, sort, page, limit } = req.query;
     const result = await reportsService.getAllReports({
       status,
       category,
       severity,
       search,
+      sort,
       page,
       limit,
     });
@@ -253,12 +396,41 @@ export const getMyReports = async (req, res) => {
 };
 
 /**
+ * GET /api/reports/reverse-geocode?lat=...&lng=...
+ * Mengonversi koordinat GPS menjadi nama jalan dan wilayah secara otomatis
+ */
+export const reverseGeocode = async (req, res) => {
+  try {
+    const rawLat = req.query.lat ?? req.query.latitude;
+    const rawLng = req.query.lng ?? req.query.longitude;
+
+    if (rawLat === undefined || rawLng === undefined || rawLat === '' || rawLng === '') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Parameter koordinat lat dan lng wajib diisi.',
+      });
+    }
+
+    const result = await reverseGeocodeCoordinates(rawLat, rawLng);
+    return res.status(200).json({
+      status: 'success',
+      data: result,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
  * GET /api/reports/:id
  * Mengambil detail satu laporan berdasarkan ID
  */
 export const getById = async (req, res) => {
   try {
-    const report = await reportsService.getReportById(req.params.id);
+    const report = await reportsService.getReportById(req.params.id, req.user || null);
 
     return res.status(200).json({
       status: 'success',
@@ -293,6 +465,80 @@ export const update = async (req, res) => {
     });
   } catch (err) {
     const statusCode = err.message.includes('tidak memiliki akses') ? 403 : 400;
+    return res.status(statusCode).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
+ * POST /api/reports/:id/confirm-duplicate
+ * Mengonfirmasi laporan aktif yang sudah ada sebagai duplikat lokasi yang sama (+1 dukungan & naikkan prioritas)
+ */
+export const confirmDuplicate = async (req, res) => {
+  try {
+    const updatedReport = await reportsService.confirmDuplicateReport(
+      req.params.id,
+      req.user.id,
+      req.body?.notes
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Konfirmasi laporan serupa berhasil dicatat. Skor prioritas diperbarui.',
+      data: updatedReport,
+    });
+  } catch (err) {
+    const statusCode = err.message.includes('tidak ditemukan') ? 404 : 400;
+    return res.status(statusCode).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
+ * GET /api/reports/authorities
+ * Mengambil daftar instansi/dinas tujuan penanganan laporan.
+ */
+export const getAuthorities = async (req, res) => {
+  try {
+    const authorities = await reportsService.getAuthorities();
+    return res.status(200).json({
+      status: 'success',
+      data: authorities,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+/**
+ * POST /api/reports/:id/route
+ * Meneruskan laporan ke instansi/dinas terkait (khusus officer/admin).
+ */
+export const routeReport = async (req, res) => {
+  try {
+    const updatedReport = await reportsService.routeReportToAuthority(
+      req.params.id,
+      req.user.id,
+      {
+        authority_id: req.body?.authority_id || null,
+        notes: req.body?.notes || null,
+      }
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Laporan berhasil diteruskan ke instansi terkait.',
+      data: updatedReport,
+    });
+  } catch (err) {
+    const statusCode = err.message.includes('tidak ditemukan') ? 404 : 400;
     return res.status(statusCode).json({
       status: 'error',
       message: err.message,

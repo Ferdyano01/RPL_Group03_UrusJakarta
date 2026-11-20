@@ -84,4 +84,21 @@ CREATE TABLE public.audit_logs (
 CREATE INDEX idx_reports_location ON public.reports(latitude, longitude);
 CREATE INDEX idx_reports_status ON public.reports(status);
 
-ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+-- Aktifkan Row Level Security (RLS) pada semua tabel agar anon key tidak dapat mengakses langsung via PostgREST;
+-- Backend Express mengakses database menggunakan service_role key.
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.authorities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.report_routings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Seed awal instansi tujuan agar fitur routing ke dinas siap digunakan pada Supabase baru
+INSERT INTO public.authorities (id, name, region, contact_email)
+VALUES (
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'Dinas Bina Marga DKI Jakarta',
+  'DKI Jakarta',
+  'binamarga@jakarta.go.id'
+)
+ON CONFLICT (id) DO NOTHING;

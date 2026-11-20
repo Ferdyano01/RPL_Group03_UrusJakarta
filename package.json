@@ -1,0 +1,14 @@
+{
+  "name": "urusjakarta-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Open Civil Damaged Road Automatic Reporting System - Kelompok 03 RPL FTUI",
+  "scripts": {
+    "start": "bash ./start-all.sh",
+    "ai": "cd road-ai && MODEL_PATH=models/trained/road_damage_v1_best.pt ./.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm start",
+    "frontend:web": "cd frontend && npm run web"
+  }
+}
+
