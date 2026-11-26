@@ -6,20 +6,36 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "urusjakarta",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.urusjakarta.app"
     },
     "android": {
       "package": "com.urusjakarta.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#F4F1EA",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "softwareKeyboardLayoutMode": "resize",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "extra": {
+      "apiUrl": "https://urusjakarta.alamsyah.net",
+      "router": {},
+      "expo-status-bar": {
+        "style": "dark"
+      },
+      "eas": {
+        "projectId": "13ffc14f-2048-43c5-88a3-6c23f7fed29a"
+      }
     },
     "web": {
       "output": "static",
@@ -27,6 +43,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-status-bar",
+        {
+          "style": "dark"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -39,15 +61,19 @@
         "expo-image-picker",
         {
           "photosPermission": "UrusJakarta memerlukan akses galeri untuk mengunggah foto kerusakan jalan.",
-          "cameraPermission": "UrusJakarta memerlukan akses kamera untuk memotret kerusakan jalan."
+          "cameraPermission": "UrusJakarta memerlukan akses kamera untuk memotret kerusakan jalan.",
+          "microphonePermission": false
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "UrusJakarta memerlukan akses lokasi GPS untuk menandai titik kerusakan jalan."
+          "locationWhenInUsePermission": "UrusJakarta memerlukan akses lokasi GPS untuk menandai titik kerusakan jalan.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
-      ]
+      ],
+      "./plugins/withAndroidOptimization.js"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,6 +1,5 @@
 import { PropsWithChildren, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
 
 import { BrutalShadow, Palette, Spacing } from '@/constants/theme';
 
@@ -34,9 +33,9 @@ export function Collapsible({
       </Pressable>
 
       {isOpen && (
-        <Animated.View entering={FadeIn.duration(160)} style={styles.content}>
+        <View style={styles.content}>
           {children}
-        </Animated.View>
+        </View>
       )}
     </View>
   );

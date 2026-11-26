@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { BrutalShadow, Palette } from '@/constants/theme';
 import { checkSystemHealth, getAuthToken } from '@/services/api';
@@ -30,8 +30,13 @@ export default function Index() {
     aiOnline: boolean;
     modelLoaded: boolean;
   } | null>(null);
+  const [hasSession, setHasSession] = useState(() => Boolean(getAuthToken()));
 
-  const hasSession = Boolean(getAuthToken());
+  useFocusEffect(
+    useCallback(() => {
+      setHasSession(Boolean(getAuthToken()));
+    }, [])
+  );
 
   useEffect(() => {
     checkSystemHealth().then(setHealth);

@@ -1,15 +1,17 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router, useFocusEffect } from 'expo-router';
 
 import { BottomNav } from '@/components/bottom-nav';
 import { ReportDetailModal } from '@/components/report-detail-modal';
@@ -22,7 +24,9 @@ import {
   formatSeverityBadge,
   formatStatusBadge,
   getAuthToken,
+  isAuthSessionError,
   resolveImageUrl,
+  subscribeAuthChange,
 } from '@/services/api';
 
 const FILTER_TABS = [
@@ -33,18 +37,24 @@ const FILTER_TABS = [
 ];
 
 export default function Riwayat() {
+  const insets = useSafeAreaInsets();
   const [activeFilter, setActiveFilter] = useState<string>('SEMUA');
   const [scope, setScope] = useState<'all' | 'my'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'priority'>('newest');
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedReport, setSelectedReport] = useState<ReportItem | null>(null);
+  const [hasToken, setHasToken] = useState(() => Boolean(getAuthToken()));
+  const hasLoadedOnce = useRef(false);
 
-  const hasToken = Boolean(getAuthToken());
-
-  const loadReports = useCallback(async () => {
-    setLoading(true);
+  const loadReports = useCallback(async (isPullRefresh = false) => {
+    if (isPullRefresh) {
+      setRefreshing(true);
+    } else if (!hasLoadedOnce.current) {
+      setLoading(true);
+    }
     setErrorMsg(null);
     try {
       if (scope === 'my' && getAuthToken()) {
@@ -66,20 +76,58 @@ export default function Riwayat() {
         });
         setReports(res.data || []);
       }
+      hasLoadedOnce.current = true;
     } catch (err: any) {
+      if (isAuthSessionError(err)) {
+        setHasToken(false);
+        setScope('all');
+      }
       setErrorMsg(err.message || 'Gagal mengambil riwayat laporan.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [activeFilter, scope, sortBy]);
 
   useEffect(() => {
-    loadReports();
+    return subscribeAuthChange((authenticated) => {
+      setHasToken(authenticated);
+      if (!authenticated) {
+        setScope('all');
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    void loadReports(false);
   }, [loadReports]);
 
+  useFocusEffect(
+    useCallback(() => {
+      setHasToken(Boolean(getAuthToken()));
+      if (hasLoadedOnce.current) {
+        void loadReports(false);
+      }
+    }, [loadReports])
+  );
+
+  const bottomPadding = 92 + (Platform.OS === 'web' ? 0 : insets.bottom);
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          Platform.OS === 'web' ? undefined : (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadReports(true)}
+              colors={[Palette.accent, Palette.ink]}
+              tintColor={Palette.accent}
+            />
+          )
+        }>
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.headerCard}>
@@ -93,7 +141,7 @@ export default function Riwayat() {
             <TouchableOpacity
               activeOpacity={0.85}
               style={styles.refreshBtn}
-              onPress={loadReports}>
+              onPress={() => loadReports(true)}>
               <Text style={styles.refreshBtnText}>Muat Ulang</Text>
             </TouchableOpacity>
           </View>
@@ -148,6 +196,9 @@ export default function Riwayat() {
                   ]}
                   onPress={() => setActiveFilter(tab.key)}>
                   <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
                     style={[
                       styles.filterText,
                       isSelected && { color: tab.activeText, fontWeight: '900' },

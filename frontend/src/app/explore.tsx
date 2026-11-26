@@ -1,6 +1,7 @@
-import { useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useCallback, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomNav } from '@/components/bottom-nav';
 import { Collapsible } from '@/components/ui/collapsible';
@@ -58,11 +59,22 @@ const STATUS_ITEMS = [
 
 export default function ExploreScreen() {
   const router = useRouter();
-  const isAuthenticated = Boolean(getAuthToken());
+  const insets = useSafeAreaInsets();
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsAuthenticated(Boolean(getAuthToken()));
+    }, [])
+  );
+
+  const bottomPadding = 92 + (Platform.OS === 'web' ? 0 : insets.bottom);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+        showsVerticalScrollIndicator={false}>
         <View style={styles.container}>
           {/* Top Bar */}
           <View style={styles.topBar}>

@@ -8,7 +8,10 @@
     "ai": "cd road-ai && MODEL_PATH=models/trained/road_damage_v1_best.pt ./.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000",
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm start",
-    "frontend:web": "cd frontend && npm run web"
+    "frontend:web": "cd frontend && npm run web",
+    "frontend:android": "cd frontend && npm run android",
+    "prebuild:android": "cd frontend && npm run prebuild:android",
+    "build:android:apk": "cd frontend && npm run build:android:apk"
   }
 }
 

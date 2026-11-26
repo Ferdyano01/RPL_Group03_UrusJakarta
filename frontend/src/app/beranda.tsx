@@ -1,15 +1,17 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router, useFocusEffect } from 'expo-router';
 
 import { BottomNav } from '@/components/bottom-nav';
 import { ReportDetailModal } from '@/components/report-detail-modal';
@@ -26,9 +28,11 @@ import {
 } from '@/services/api';
 
 export default function Beranda() {
-  const user = getCurrentUser();
+  const insets = useSafeAreaInsets();
+  const [user, setUser] = useState(() => getCurrentUser());
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [health, setHealth] = useState<{
     backendOnline: boolean;
@@ -36,9 +40,14 @@ export default function Beranda() {
     storageMode: string;
   } | null>(null);
   const [selectedReport, setSelectedReport] = useState<ReportItem | null>(null);
+  const hasLoadedOnce = useRef(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (isPullRefresh = false) => {
+    if (isPullRefresh) {
+      setRefreshing(true);
+    } else if (!hasLoadedOnce.current) {
+      setLoading(true);
+    }
     setErrorMsg(null);
     try {
       const [healthData, reportsRes] = await Promise.all([
@@ -47,16 +56,21 @@ export default function Beranda() {
       ]);
       setHealth(healthData);
       setReports(reportsRes.data || []);
+      hasLoadedOnce.current = true;
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal memuat daftar laporan.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      setUser(getCurrentUser());
+      void loadData(false);
+    }, [loadData])
+  );
 
   const totalCount = reports.length;
   const inProgressCount = reports.filter((r) =>
@@ -69,10 +83,23 @@ export default function Beranda() {
   const firstName = user?.full_name
     ? user.full_name.trim().split(' ')[0]
     : null;
+  const bottomPadding = 92 + (Platform.OS === 'web' ? 0 : insets.bottom);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          Platform.OS === 'web' ? undefined : (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadData(true)}
+              colors={[Palette.accent, Palette.ink]}
+              tintColor={Palette.accent}
+            />
+          )
+        }>
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.headerCard}>
@@ -100,7 +127,7 @@ export default function Beranda() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 style={[styles.headerBtn, styles.headerBtnAccent]}
-                onPress={loadData}>
+                onPress={() => loadData(true)}>
                 <Text style={styles.headerBtnText}>Muat Ulang</Text>
               </TouchableOpacity>
             </View>
@@ -193,7 +220,7 @@ export default function Beranda() {
             <View style={styles.errorBox}>
               <Text style={styles.errorTitle}>Gagal Memuat Data</Text>
               <Text style={styles.errorText}>{errorMsg}</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={loadData}>
+              <TouchableOpacity style={styles.retryBtn} onPress={() => loadData(true)}>
                 <Text style={styles.retryBtnText}>Coba Lagi</Text>
               </TouchableOpacity>
             </View>

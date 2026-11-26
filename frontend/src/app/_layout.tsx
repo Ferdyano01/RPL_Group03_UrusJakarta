@@ -4,9 +4,15 @@ import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import { Stack, usePathname } from 'expo-router';
 import Head from 'expo-router/head';
+import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 
 import { Palette } from '@/constants/theme';
 import { initAuthStorage } from '@/services/api';
+
+if (Platform.OS !== 'web') {
+  void SplashScreen.preventAutoHideAsync().catch(() => {});
+}
 
 const ROUTE_TITLES: Record<string, string> = {
   '/': 'UrusJakarta — Pelaporan Jalan Rusak DKI',
@@ -28,6 +34,12 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
+    if (ready && Platform.OS !== 'web') {
+      void SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [ready]);
+
+  useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       document.title = pageTitle;
     }
@@ -40,6 +52,7 @@ export default function RootLayout() {
       <Head>
         <title>{pageTitle}</title>
       </Head>
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
           headerShown: false,

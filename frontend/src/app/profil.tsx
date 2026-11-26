@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -7,20 +9,19 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router, useFocusEffect } from 'expo-router';
 
 import { BottomNav } from '@/components/bottom-nav';
 import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
   UserProfile,
-  checkSystemHealth,
   clearAuthSession,
   fetchMyProfile,
-  getApiBaseUrl,
   getAuthToken,
   getCurrentUser,
-  setApiBaseUrl,
+  isAuthSessionError,
+  subscribeAuthChange,
   updateMyProfile,
 } from '@/services/api';
 
@@ -32,30 +33,55 @@ function getInitials(name?: string): string {
 }
 
 export default function Profil() {
-  const [user, setUser] = useState<UserProfile | null>(getCurrentUser());
+  const insets = useSafeAreaInsets();
+  const [user, setUser] = useState<UserProfile | null>(() =>
+    getAuthToken() ? getCurrentUser() : null
+  );
   const isAuthenticated = Boolean(getAuthToken() && user);
 
   const [editingProfile, setEditingProfile] = useState(false);
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [phoneNumber, setPhoneNumber] = useState(user?.phone_number || '');
 
-  const [showServerConfig, setShowServerConfig] = useState(false);
-  const [apiUrlInput, setApiUrlInput] = useState(getApiBaseUrl());
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
-    if (!getAuthToken()) return;
-    fetchMyProfile()
-      .then((profile) => {
-        setUser(profile);
-        setFullName(profile.full_name || '');
-        setPhoneNumber(profile.phone_number || '');
-      })
-      .catch(() => {
-        // Sesi tidak valid atau offline
-      });
+    return subscribeAuthChange((authenticated) => {
+      if (!authenticated) {
+        setUser(null);
+        setEditingProfile(false);
+      }
+    });
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!getAuthToken()) {
+        setUser(null);
+        return;
+      }
+      const current = getCurrentUser();
+      setUser(current);
+      if (current) {
+        setFullName(current.full_name || '');
+        setPhoneNumber(current.phone_number || '');
+      }
+      fetchMyProfile()
+        .then((profile) => {
+          setUser(profile);
+          setFullName(profile.full_name || '');
+          setPhoneNumber(profile.phone_number || '');
+        })
+        .catch((err) => {
+          if (isAuthSessionError(err)) {
+            setUser(null);
+            setEditingProfile(false);
+            setFeedback({ type: 'err', text: err.message });
+          }
+        });
+    }, [])
+  );
 
   const handleSaveProfile = async () => {
     setFeedback(null);
@@ -68,26 +94,11 @@ export default function Profil() {
       setEditingProfile(false);
       setFeedback({ type: 'ok', text: 'Data profil Anda berhasil diperbarui.' });
     } catch (err: any) {
+      if (isAuthSessionError(err)) {
+        setUser(null);
+        setEditingProfile(false);
+      }
       setFeedback({ type: 'err', text: err.message || 'Gagal memperbarui profil.' });
-    }
-  };
-
-  const handleSaveApiUrl = async () => {
-    setApiBaseUrl(apiUrlInput);
-    const health = await checkSystemHealth();
-    setShowServerConfig(false);
-    if (health.backendOnline) {
-      setFeedback({
-        type: 'ok',
-        text: `Terhubung ke server (${getApiBaseUrl()}). Layanan deteksi foto ${
-          health.aiOnline ? 'aktif' : 'dalam mode siaga'
-        }.`,
-      });
-    } else {
-      setFeedback({
-        type: 'err',
-        text: `Tidak dapat menghubungi server di ${getApiBaseUrl()}.`,
-      });
     }
   };
 
@@ -101,9 +112,17 @@ export default function Profil() {
       ? 'Warga Pelapor'
       : (user?.role || 'Petugas').toUpperCase();
 
+  const bottomPadding = 92 + (Platform.OS === 'web' ? 0 : insets.bottom);
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.headerRow}>
@@ -234,56 +253,6 @@ export default function Profil() {
               </View>
             )}
 
-            {/* Server API */}
-            <View style={styles.accordionCard}>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={styles.menuHeader}
-                onPress={() => setShowServerConfig((v) => !v)}>
-                <View style={styles.menuCopy}>
-                  <Text style={styles.menuTitle}>Koneksi Server API</Text>
-                  <Text style={styles.menuSub} numberOfLines={1}>
-                    Aktif: {getApiBaseUrl()}
-                  </Text>
-                </View>
-                <View style={[styles.stateChip, showServerConfig && styles.stateChipActive]}>
-                  <Text
-                    style={[
-                      styles.stateChipText,
-                      showServerConfig && styles.stateChipTextActive,
-                    ]}>
-                    {showServerConfig ? 'Tutup' : 'Atur'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              {showServerConfig && (
-                <View style={styles.panelBody}>
-                  <Text style={styles.inputLabel}>Alamat URL Server Backend</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={apiUrlInput}
-                    onChangeText={setApiUrlInput}
-                    autoCapitalize="none"
-                    placeholder="http://localhost:5000"
-                    placeholderTextColor={Palette.inkSubtle}
-                  />
-                  <View style={styles.btnRow}>
-                    <TouchableOpacity
-                      style={[styles.panelBtn, { backgroundColor: Palette.yellow }]}
-                      onPress={handleSaveApiUrl}>
-                      <Text style={styles.panelBtnText}>Uji dan Simpan</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.panelBtn, { backgroundColor: Palette.surface }]}
-                      onPress={() => setShowServerConfig(false)}>
-                      <Text style={styles.panelBtnText}>Batal</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
-
             {/* Info Dinas & Kontak */}
             <View style={styles.accordionCard}>
               <TouchableOpacity
@@ -334,6 +303,7 @@ export default function Profil() {
           )}
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <BottomNav active="profil" />
     </SafeAreaView>

@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { YoloDetectionViewer } from '@/components/yolo-detection-viewer';
 import { BrutalShadow, Palette } from '@/constants/theme';
@@ -42,6 +45,7 @@ export function ReportDetailModal({
   onClose,
   onUpdated,
 }: ReportDetailModalProps) {
+  const insets = useSafeAreaInsets();
   const [report, setReport] = useState<ReportItem | null>(initialReport || null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -171,22 +175,35 @@ export function ReportDetailModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.modalCard}>
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <View style={styles.headerLeft}>
-              <View style={styles.headerTag}>
-                <Text style={styles.headerTagText}>LAPORAN</Text>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View
+          style={[
+            styles.overlay,
+            Platform.OS !== 'web' && {
+              paddingTop: Math.max(16, insets.top + 8),
+              paddingBottom: Math.max(16, insets.bottom + 8),
+            },
+          ]}>
+          <View style={styles.modalCard}>
+            {/* Header */}
+            <View style={styles.headerRow}>
+              <View style={styles.headerLeft}>
+                <View style={styles.headerTag}>
+                  <Text style={styles.headerTagText}>LAPORAN</Text>
+                </View>
+                <Text style={styles.headerTitle}>Detail Penanganan</Text>
               </View>
-              <Text style={styles.headerTitle}>Detail Penanganan</Text>
+              <TouchableOpacity activeOpacity={0.85} style={styles.closeBtn} onPress={onClose}>
+                <Text style={styles.closeBtnText}>Tutup</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity activeOpacity={0.85} style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeBtnText}>Tutup</Text>
-            </TouchableOpacity>
-          </View>
 
-          <ScrollView style={styles.bodyScroll} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.bodyScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled">
             {loading && (
               <View style={styles.loadingRow}>
                 <ActivityIndicator size="small" color={Palette.ink} />
@@ -497,9 +514,10 @@ export function ReportDetailModal({
             )}
 
             <View style={{ height: 24 }} />
-          </ScrollView>
+            </ScrollView>
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -708,7 +726,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   aiCell: {
-    width: '48.5%',
+    width: '48%',
     backgroundColor: Palette.surface,
     borderWidth: 1.5,
     borderColor: Palette.ink,

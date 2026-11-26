@@ -155,15 +155,51 @@ export interface DraftAnalysisResponse {
   upload_warning?: string;
 }
 
+const DEFAULT_API_URL = 'https://urusjakarta.alamsyah.net';
+const JWT_EXPIRY_SKEW_MS = 30_000;
+
+export class AuthSessionError extends Error {
+  readonly isAuthError = true;
+
+  constructor(message = 'Sesi login Anda telah berakhir atau tidak valid. Silakan masuk kembali.') {
+    super(message);
+    this.name = 'AuthSessionError';
+  }
+}
+
+export const isAuthSessionError = (err: unknown): err is AuthSessionError =>
+  err instanceof AuthSessionError ||
+  Boolean(err && typeof err === 'object' && (err as { isAuthError?: boolean }).isAuthError);
+
+type AuthListener = (authenticated: boolean) => void;
+const authListeners = new Set<AuthListener>();
+
+export const subscribeAuthChange = (listener: AuthListener): (() => void) => {
+  authListeners.add(listener);
+  return () => {
+    authListeners.delete(listener);
+  };
+};
+
+const notifyAuthListeners = (authenticated: boolean) => {
+  for (const listener of authListeners) {
+    try {
+      listener(authenticated);
+    } catch {
+      // Abaikan error listener individual
+    }
+  }
+};
+
 const STORAGE_KEYS = {
   TOKEN: 'urusjakarta_token',
   USER: 'urusjakarta_user',
-  API_URL: 'urusjakarta_api_url',
+  AUTH_API_URL: 'urusjakarta_auth_api_url',
 };
 
 let memoryToken: string | null = null;
 let memoryUser: UserProfile | null = null;
-let memoryApiUrl: string | null = null;
+let memoryAuthApiUrl: string | null = null;
 
 const getStorageItem = (key: string): string | null => {
   try {
@@ -196,64 +232,136 @@ const setStorageItem = (key: string, value: string | null) => {
   }
 };
 
-export const initAuthStorage = async (): Promise<void> => {
-  if (Platform.OS === 'web') return;
+const clearStoredAuthData = (notify: boolean) => {
+  memoryToken = null;
+  memoryUser = null;
+  memoryAuthApiUrl = null;
+  setStorageItem(STORAGE_KEYS.TOKEN, null);
+  setStorageItem(STORAGE_KEYS.USER, null);
+  setStorageItem(STORAGE_KEYS.AUTH_API_URL, null);
+  if (notify) {
+    notifyAuthListeners(false);
+  }
+};
+
+const decodeBase64UrlAscii = (segment: string): string | null => {
+  const normalized = segment.replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (normalized.length % 4)) % 4;
+  const padded = normalized + '='.repeat(padLen);
+
+  if (typeof globalThis.atob === 'function') {
+    try {
+      return globalThis.atob(padded);
+    } catch {
+      return null;
+    }
+  }
+
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+  let buffer = 0;
+  let bits = 0;
+  for (let i = 0; i < padded.length; i += 1) {
+    const ch = padded[i];
+    if (ch === '=') break;
+    const val = alphabet.indexOf(ch);
+    if (val === -1) return null;
+    buffer = (buffer << 6) | val;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      output += String.fromCharCode((buffer >> bits) & 0xff);
+    }
+  }
+  return output;
+};
+
+const isTokenInvalidOrExpired = (token: string): boolean => {
+  const parts = token.trim().split('.');
+  if (parts.length !== 3 || !parts[1]) {
+    return true;
+  }
+  const decoded = decodeBase64UrlAscii(parts[1]);
+  if (!decoded) {
+    return true;
+  }
   try {
-    const [token, userRaw, apiUrl] = await Promise.all([
+    const payload = JSON.parse(decoded) as { exp?: unknown };
+    if (typeof payload.exp === 'number' && Number.isFinite(payload.exp)) {
+      return Date.now() >= payload.exp * 1000 - JWT_EXPIRY_SKEW_MS;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+const hasMismatchedAuthApiUrl = (savedApiUrl: string | null): boolean =>
+  Boolean(savedApiUrl && savedApiUrl.trim() !== getApiBaseUrl());
+
+export const initAuthStorage = async (): Promise<void> => {
+  if (Platform.OS === 'web') {
+    void getAuthToken();
+    return;
+  }
+  try {
+    const [token, userRaw, authApiUrl] = await Promise.all([
       AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
       AsyncStorage.getItem(STORAGE_KEYS.USER),
-      AsyncStorage.getItem(STORAGE_KEYS.API_URL),
+      AsyncStorage.getItem(STORAGE_KEYS.AUTH_API_URL),
     ]);
-    if (token) memoryToken = token;
+    if (!token || isTokenInvalidOrExpired(token) || hasMismatchedAuthApiUrl(authApiUrl)) {
+      if (token || userRaw || authApiUrl) {
+        clearStoredAuthData(false);
+      }
+      return;
+    }
+    memoryToken = token;
+    memoryAuthApiUrl = authApiUrl;
     if (userRaw) memoryUser = JSON.parse(userRaw) as UserProfile;
-    if (apiUrl) memoryApiUrl = apiUrl;
   } catch {
     // Abaikan jika gagal membaca AsyncStorage
   }
 };
 
-const detectDefaultApiUrl = (): string => {
+export const getApiBaseUrl = (): string => {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
   }
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    if (window.location.protocol === 'https:') {
+    const { protocol, hostname } = window.location;
+    if (
+      protocol === 'http:' &&
+      (hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname))
+    ) {
+      return `http://${hostname}:5000`;
+    }
+    if (protocol === 'https:') {
       return window.location.origin.replace(/\/+$/, '');
     }
-    const hostname = window.location.hostname || 'localhost';
-    return `http://${hostname}:5000`;
   }
-  const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const host = hostUri.split(':')[0];
-    if (host) {
-      return `http://${host}:5000`;
-    }
+  const extraApiUrl = Constants.expoConfig?.extra?.apiUrl;
+  if (typeof extraApiUrl === 'string' && extraApiUrl.trim()) {
+    return extraApiUrl.trim().replace(/\/+$/, '');
   }
-  return 'http://localhost:5000';
-};
-
-export const getApiBaseUrl = (): string => {
-  if (memoryApiUrl) return memoryApiUrl;
-  const saved = getStorageItem(STORAGE_KEYS.API_URL);
-  if (saved) {
-    memoryApiUrl = saved;
-    return saved;
-  }
-  return detectDefaultApiUrl();
-};
-
-export const setApiBaseUrl = (url: string) => {
-  const cleaned = url.trim().replace(/\/+$/, '');
-  memoryApiUrl = cleaned;
-  setStorageItem(STORAGE_KEYS.API_URL, cleaned);
+  return DEFAULT_API_URL;
 };
 
 export const getAuthToken = (): string | null => {
-  if (memoryToken) return memoryToken;
-  const saved = getStorageItem(STORAGE_KEYS.TOKEN);
-  if (saved) {
-    memoryToken = saved;
+  const token = memoryToken ?? getStorageItem(STORAGE_KEYS.TOKEN);
+  if (!token) {
+    return null;
+  }
+  const savedAuthApiUrl = memoryAuthApiUrl ?? getStorageItem(STORAGE_KEYS.AUTH_API_URL);
+  if (isTokenInvalidOrExpired(token) || hasMismatchedAuthApiUrl(savedAuthApiUrl)) {
+    clearStoredAuthData(false);
+    return null;
+  }
+  memoryToken = token;
+  if (savedAuthApiUrl) {
+    memoryAuthApiUrl = savedAuthApiUrl;
   }
   return memoryToken;
 };
@@ -272,10 +380,14 @@ export const getCurrentUser = (): UserProfile | null => {
 };
 
 export const setAuthSession = (token: string, user: UserProfile) => {
+  const baseUrl = getApiBaseUrl();
   memoryToken = token;
   memoryUser = user;
+  memoryAuthApiUrl = baseUrl;
   setStorageItem(STORAGE_KEYS.TOKEN, token);
   setStorageItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  setStorageItem(STORAGE_KEYS.AUTH_API_URL, baseUrl);
+  notifyAuthListeners(true);
 };
 
 export const updateStoredUser = (user: UserProfile) => {
@@ -284,10 +396,7 @@ export const updateStoredUser = (user: UserProfile) => {
 };
 
 export const clearAuthSession = () => {
-  memoryToken = null;
-  memoryUser = null;
-  setStorageItem(STORAGE_KEYS.TOKEN, null);
-  setStorageItem(STORAGE_KEYS.USER, null);
+  clearStoredAuthData(true);
 };
 
 export const resolveImageUrl = (imageUrl?: string | null): string | null => {
@@ -302,15 +411,140 @@ export const resolveImageUrl = (imageUrl?: string | null): string | null => {
   if (imageUrl.includes('localhost:5000')) {
     return imageUrl.replace('http://localhost:5000', baseUrl);
   }
+  if (imageUrl.includes('127.0.0.1:5000')) {
+    return imageUrl.replace('http://127.0.0.1:5000', baseUrl);
+  }
   return imageUrl;
+};
+
+const createApiHttpError = (
+  status: number,
+  message: string,
+  hadToken: boolean,
+  endpoint: string
+): Error => {
+  const isAuthCredentialEndpoint =
+    endpoint.startsWith('/api/auth/login') || endpoint.startsWith('/api/auth/register');
+  if (status === 401 && hadToken && !isAuthCredentialEndpoint) {
+    clearAuthSession();
+    return new AuthSessionError(
+      'Sesi login Anda telah berakhir atau tidak valid. Silakan masuk kembali.'
+    );
+  }
+  return new Error(message);
+};
+
+const sendFormDataNative = <T>(
+  url: string,
+  endpoint: string,
+  method: string,
+  headers: Record<string, string>,
+  hadToken: boolean,
+  body: FormData,
+  timeoutMs: number,
+  externalSignal?: AbortSignal | null
+): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+
+    const cleanupAbort = () => {
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
+    };
+
+    const finishError = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanupAbort();
+      reject(err);
+    };
+
+    const onExternalAbort = () => {
+      xhr.abort();
+      finishError(new Error('Permintaan dibatalkan.'));
+    };
+
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        reject(new Error('Permintaan dibatalkan.'));
+        return;
+      }
+      externalSignal.addEventListener('abort', onExternalAbort);
+    }
+
+    xhr.open(method, url);
+    xhr.timeout = timeoutMs;
+
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() !== 'content-type' && value !== undefined) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
+
+    xhr.onload = () => {
+      if (settled) return;
+      settled = true;
+      cleanupAbort();
+
+      let json: any = null;
+      try {
+        json = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!json || typeof json !== 'object') {
+        json = {
+          status: 'error',
+          message: `Respons server tidak valid (HTTP ${xhr.status})`,
+        };
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300 || json.status === 'error') {
+        reject(
+          createApiHttpError(
+            xhr.status,
+            json.message || `Permintaan gagal (HTTP ${xhr.status})`,
+            hadToken,
+            endpoint
+          )
+        );
+        return;
+      }
+
+      resolve(json as T);
+    };
+
+    xhr.onerror = () => {
+      finishError(
+        new Error('Tidak dapat terhubung ke server. Periksa koneksi internet Anda.')
+      );
+    };
+
+    xhr.ontimeout = () => {
+      finishError(
+        new Error('Unggahan melebihi batas waktu. Periksa koneksi internet atau perkecil ukuran foto.')
+      );
+    };
+
+    xhr.onabort = () => {
+      finishError(new Error('Permintaan dibatalkan.'));
+    };
+
+    xhr.send(body as any);
+  });
 };
 
 const apiRequest = async <T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs?: number
 ): Promise<T> => {
   const baseUrl = getApiBaseUrl();
   const token = getAuthToken();
+  const hadToken = Boolean(token);
 
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
@@ -320,14 +554,56 @@ const apiRequest = async <T>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+  const isFormData = options.body instanceof FormData;
+  if (!isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(`${baseUrl}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const effectiveTimeout = timeoutMs ?? (isFormData ? 45000 : 20000);
+
+  // Expo SDK 57 Winter fetch tidak mendukung objek { uri, name, type } pada FormData di native;
+  // XMLHttpRequest React Native men-stream file:// dan content:// langsung melalui OkHttp.
+  if (Platform.OS !== 'web' && isFormData) {
+    return sendFormDataNative<T>(
+      `${baseUrl}${endpoint}`,
+      endpoint,
+      (options.method || 'POST').toUpperCase(),
+      headers,
+      hadToken,
+      options.body as FormData,
+      effectiveTimeout,
+      options.signal
+    );
+  }
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timerId =
+    controller && !options.signal
+      ? setTimeout(() => controller.abort(), effectiveTimeout)
+      : null;
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+      signal: options.signal ?? controller?.signal,
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Koneksi ke server melebihi batas waktu. Periksa jaringan internet Anda.');
+    }
+    const msg = String(err?.message || '');
+    if (
+      err instanceof TypeError ||
+      /network request failed|failed to fetch|fetch failed|network error/i.test(msg)
+    ) {
+      throw new Error('Tidak dapat terhubung ke server. Periksa koneksi internet Anda.');
+    }
+    throw new Error(msg || 'Gagal menghubungi server.');
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
 
   const json = await response.json().catch(() => ({
     status: 'error',
@@ -335,7 +611,12 @@ const apiRequest = async <T>(
   }));
 
   if (!response.ok || json.status === 'error') {
-    throw new Error(json.message || `Permintaan gagal (${response.status})`);
+    throw createApiHttpError(
+      response.status,
+      json.message || `Permintaan gagal (${response.status})`,
+      hadToken,
+      endpoint
+    );
   }
 
   return json as T;
@@ -429,6 +710,24 @@ const appendImageToFormData = (
   }
 };
 
+export const uploadImageApi = async (
+  imageFile: PickedImageFile
+): Promise<{ url: string }> => {
+  const formData = new FormData();
+  appendImageToFormData(formData, imageFile);
+
+  const res = await apiRequest<{
+    status: string;
+    message: string;
+    data: { url: string };
+  }>('/api/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  return res.data;
+};
+
 export const analyzeReportDraftApi = async (params: {
   imageFile?: PickedImageFile | null;
   webFile?: File | null;
@@ -436,6 +735,7 @@ export const analyzeReportDraftApi = async (params: {
   longitude: number | string;
   address?: string;
   description?: string;
+  imageUrl?: string | null;
   uploadImage?: boolean;
 }): Promise<DraftAnalysisResponse> => {
   const formData = new FormData();
@@ -444,6 +744,7 @@ export const analyzeReportDraftApi = async (params: {
   formData.append('longitude', String(params.longitude));
   if (params.address) formData.append('address', params.address);
   if (params.description) formData.append('description', params.description);
+  if (params.imageUrl) formData.append('image_url', params.imageUrl);
   formData.append('upload_image', params.uploadImage === false ? 'false' : 'true');
 
   const res = await apiRequest<{

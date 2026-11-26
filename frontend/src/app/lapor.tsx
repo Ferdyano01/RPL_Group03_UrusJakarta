@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,8 +14,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Stack, router } from 'expo-router';
+import { Stack, router, useFocusEffect } from 'expo-router';
 
+import { WebCameraModal } from '@/components/web-camera-modal';
 import { YoloDetectionViewer } from '@/components/yolo-detection-viewer';
 import { BrutalShadow, MaxContentWidth, Palette } from '@/constants/theme';
 import {
@@ -23,18 +25,41 @@ import {
   analyzeReportDraftApi,
   confirmDuplicateReportApi,
   createReportApi,
+  fetchMyProfile,
   formatCategoryLabel,
   formatSeverityBadge,
   formatStatusBadge,
   getAuthToken,
+  isAuthSessionError,
   reverseGeocodeApi,
+  subscribeAuthChange,
+  uploadImageApi,
 } from '@/services/api';
 
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+]);
+const AUTO_UPLOAD_MAX_BYTES = 4.8 * 1024 * 1024;
+const HARD_MAX_BYTES = 9.8 * 1024 * 1024;
+const SESSION_EXPIRED_FALLBACK_MSG =
+  'Sesi login Anda telah berakhir atau tidak valid. Silakan masuk kembali.';
+
 export default function LaporScreen() {
-  const isAuthenticated = Boolean(getAuthToken());
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
 
   const [imageFile, setImageFile] = useState<PickedImageFile | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [webCameraOpen, setWebCameraOpen] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [uploadStatusMsg, setUploadStatusMsg] = useState<string | null>(null);
+
+  const previewUriRef = useRef<string | null>(null);
+  const uploadAttemptRef = useRef(0);
 
   const [address, setAddress] = useState('');
   const [latitude, setLatitude] = useState('');
@@ -55,29 +80,141 @@ export default function LaporScreen() {
   const [draftCategory, setDraftCategory] = useState('pothole');
   const [draftSeverity, setDraftSeverity] = useState<'low' | 'medium' | 'high'>('high');
 
+  const handleSessionExpired = useCallback((message?: string) => {
+    uploadAttemptRef.current += 1;
+    setUploadStatus('idle');
+    setUploadedImageUrl(null);
+    setUploadStatusMsg(null);
+    setErrorMsg(null);
+    setIsAuthenticated(false);
+    setSessionNotice(message || SESSION_EXPIRED_FALLBACK_MSG);
+  }, []);
+
+  useEffect(() => {
+    return subscribeAuthChange((authenticated) => {
+      setIsAuthenticated(authenticated);
+      if (authenticated) {
+        setSessionNotice(null);
+      }
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const hasToken = Boolean(getAuthToken());
+      setIsAuthenticated(hasToken);
+      if (!hasToken) return;
+
+      setSessionNotice(null);
+      void fetchMyProfile().catch((err) => {
+        if (isAuthSessionError(err)) {
+          handleSessionExpired(err.message);
+        }
+      });
+    }, [handleSessionExpired])
+  );
+
+  useEffect(() => {
+    return () => {
+      if (
+        Platform.OS === 'web' &&
+        previewUriRef.current &&
+        previewUriRef.current.startsWith('blob:')
+      ) {
+        URL.revokeObjectURL(previewUriRef.current);
+      }
+    };
+  }, []);
+
+  const autoUploadSelectedImage = async (picked: PickedImageFile) => {
+    if (!getAuthToken()) {
+      handleSessionExpired();
+      return;
+    }
+
+    const attemptId = ++uploadAttemptRef.current;
+    setUploadStatus('uploading');
+    setUploadedImageUrl(null);
+    setUploadStatusMsg('Mengunggah foto otomatis ke sistem...');
+
+    try {
+      const uploaded = await uploadImageApi(picked);
+      if (uploadAttemptRef.current !== attemptId) return;
+      setUploadedImageUrl(uploaded.url);
+      setUploadStatus('uploaded');
+      setUploadStatusMsg('Foto otomatis terunggah dan tersimpan di sistem.');
+    } catch (err: any) {
+      if (uploadAttemptRef.current !== attemptId) return;
+      if (isAuthSessionError(err)) {
+        handleSessionExpired(err.message);
+        return;
+      }
+      setUploadStatus('error');
+      setUploadStatusMsg(
+        err?.message || 'Unggah otomatis gagal. Foto tetap siap dikirim atau coba unggah ulang.'
+      );
+    }
+  };
+
+  const applySelectedImage = (picked: PickedImageFile, shouldAutoUpload = true) => {
+    if (
+      Platform.OS === 'web' &&
+      previewUriRef.current &&
+      previewUriRef.current.startsWith('blob:') &&
+      previewUriRef.current !== picked.uri
+    ) {
+      URL.revokeObjectURL(previewUriRef.current);
+    }
+    previewUriRef.current = picked.uri;
+    setImageFile(picked);
+    setPreviewUri(picked.uri);
+    setAnalysisData(null);
+    setUploadedImageUrl(null);
+    setUploadStatus('idle');
+    setUploadStatusMsg(null);
+
+    if (shouldAutoUpload) {
+      void autoUploadSelectedImage(picked);
+    }
+  };
+
+  const handleWebCameraCapture = (picked: PickedImageFile) => {
+    setWebCameraOpen(false);
+    setErrorMsg(null);
+    applySelectedImage(picked, true);
+  };
+
   const handlePickImage = async (fromCamera = false) => {
     setErrorMsg(null);
 
-    if (Platform.OS === 'web' && !fromCamera && typeof document !== 'undefined') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/jpeg,image/png,image/webp';
-      input.onchange = (e: any) => {
-        const file = e.target?.files?.[0];
-        if (file) {
-          const uri = URL.createObjectURL(file);
-          setImageFile({
-            uri,
-            name: file.name,
-            type: file.type || 'image/jpeg',
-            webFile: file,
-          });
-          setPreviewUri(uri);
-          setAnalysisData(null);
-        }
-      };
-      input.click();
-      return;
+    if (Platform.OS === 'web') {
+      if (fromCamera) {
+        setWebCameraOpen(true);
+        return;
+      }
+
+      if (typeof document !== 'undefined') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.onchange = (e: any) => {
+          const file = e.target?.files?.[0];
+          if (file) {
+            const uri = URL.createObjectURL(file);
+            applySelectedImage(
+              {
+                uri,
+                name: file.name,
+                type: file.type || 'image/jpeg',
+                webFile: file,
+              },
+              true
+            );
+          }
+        };
+        input.click();
+        return;
+      }
     }
 
     const perm = fromCamera
@@ -94,16 +231,47 @@ export default function LaporScreen() {
     }
 
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+      ? await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.6,
+          exif: false,
+          cameraType: ImagePicker.CameraType.back,
+        })
+      : await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.7,
+          exif: false,
+        });
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       const name = asset.fileName || `road-${Date.now()}.jpg`;
-      const type = asset.mimeType || 'image/jpeg';
-      setImageFile({ uri: asset.uri, name, type });
-      setPreviewUri(asset.uri);
-      setAnalysisData(null);
+      const inferredType =
+        asset.mimeType && asset.mimeType.startsWith('image/')
+          ? asset.mimeType.toLowerCase()
+          : name.toLowerCase().endsWith('.png')
+            ? 'image/png'
+            : name.toLowerCase().endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+      const normalizedType = inferredType === 'image/jpg' ? 'image/jpeg' : inferredType;
+
+      if (!ALLOWED_IMAGE_MIME_TYPES.has(normalizedType)) {
+        setErrorMsg(
+          `Format foto (${normalizedType}) belum didukung. Gunakan foto berformat JPG, PNG, atau WEBP.`
+        );
+        return;
+      }
+
+      if (asset.fileSize && asset.fileSize > HARD_MAX_BYTES) {
+        setErrorMsg(
+          'Ukuran foto melebihi batas 10 MB. Pilih foto lain atau gunakan resolusi kamera yang lebih rendah.'
+        );
+        return;
+      }
+
+      const shouldAutoUpload = !asset.fileSize || asset.fileSize <= AUTO_UPLOAD_MAX_BYTES;
+      applySelectedImage({ uri: asset.uri, name, type: normalizedType }, shouldAutoUpload);
     }
   };
 
@@ -224,11 +392,15 @@ export default function LaporScreen() {
   const handleAnalyzeWithAI = async () => {
     setErrorMsg(null);
     if (!getAuthToken()) {
-      router.replace('/signup?mode=login' as any);
+      handleSessionExpired();
       return;
     }
     if (!imageFile) {
       setErrorMsg('Silakan pilih atau unggah foto kondisi jalan terlebih dahulu.');
+      return;
+    }
+    if (uploadStatus === 'uploading') {
+      setErrorMsg('Tunggu sebentar hingga unggahan foto otomatis selesai.');
       return;
     }
     if (!validateLocationFields()) return;
@@ -241,7 +413,8 @@ export default function LaporScreen() {
         longitude,
         address: address.trim(),
         description: userNotes.trim(),
-        uploadImage: true,
+        imageUrl: uploadedImageUrl,
+        uploadImage: !uploadedImageUrl,
       });
       setAnalysisData(result);
       setDraftTitle(result.draft.title);
@@ -249,6 +422,10 @@ export default function LaporScreen() {
       setDraftCategory(result.draft.category);
       setDraftSeverity(result.draft.severity);
     } catch (err: any) {
+      if (isAuthSessionError(err)) {
+        handleSessionExpired(err.message);
+        return;
+      }
       setErrorMsg(err.message || 'Gagal menjalankan analisis foto.');
     } finally {
       setAnalyzing(false);
@@ -258,11 +435,15 @@ export default function LaporScreen() {
   const handleSubmitReport = async () => {
     setErrorMsg(null);
     if (!getAuthToken()) {
-      router.replace('/signup?mode=login' as any);
+      handleSessionExpired();
       return;
     }
-    if (!imageFile && !analysisData?.draft.image_url) {
+    if (!imageFile && !analysisData?.draft.image_url && !uploadedImageUrl) {
       setErrorMsg('Silakan unggah foto kondisi jalan terlebih dahulu sebelum mengirim laporan.');
+      return;
+    }
+    if (uploadStatus === 'uploading') {
+      setErrorMsg('Tunggu sebentar hingga unggahan foto otomatis selesai.');
       return;
     }
     if (!validateLocationFields()) return;
@@ -277,13 +458,17 @@ export default function LaporScreen() {
         latitude,
         longitude,
         address: address.trim(),
-        image_url: analysisData?.draft.image_url || undefined,
+        image_url: analysisData?.draft.image_url || uploadedImageUrl || undefined,
         ai_analysis: analysisData?.ai_analysis || null,
         status: analysisData?.draft.suggested_status || 'submitted',
         imageFile: analysisData ? null : imageFile,
       });
       router.replace('/riwayat' as any);
     } catch (err: any) {
+      if (isAuthSessionError(err)) {
+        handleSessionExpired(err.message);
+        return;
+      }
       setErrorMsg(err.message || 'Gagal mengirim laporan.');
     } finally {
       setSubmitting(false);
@@ -293,7 +478,7 @@ export default function LaporScreen() {
   const handleConfirmDuplicate = async (reportId: string) => {
     setErrorMsg(null);
     if (!getAuthToken()) {
-      router.replace('/signup?mode=login' as any);
+      handleSessionExpired();
       return;
     }
     setConfirmingDupId(reportId);
@@ -306,6 +491,10 @@ export default function LaporScreen() {
       );
       router.replace('/riwayat' as any);
     } catch (err: any) {
+      if (isAuthSessionError(err)) {
+        handleSessionExpired(err.message);
+        return;
+      }
       setErrorMsg(err.message || 'Gagal mengonfirmasi laporan duplikat.');
     } finally {
       setConfirmingDupId(null);
@@ -324,8 +513,10 @@ export default function LaporScreen() {
     ? formatStatusBadge(analysisData.draft.suggested_status)
     : null;
 
+  const bottomPadding = 24;
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'right', 'bottom', 'left']}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Top Bar */}
@@ -334,7 +525,13 @@ export default function LaporScreen() {
           <TouchableOpacity
             activeOpacity={0.85}
             style={styles.backBtn}
-            onPress={() => router.back()}>
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/beranda' as any);
+              }
+            }}>
             <Text style={styles.backBtnText}>Kembali</Text>
           </TouchableOpacity>
           <View style={styles.topBarCopy}>
@@ -350,10 +547,22 @@ export default function LaporScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
         <View style={styles.container}>
           {!isAuthenticated ? (
             <View style={styles.authGateCard}>
+              {sessionNotice && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorTitle}>Sesi Berakhir</Text>
+                  <Text style={styles.errorText}>{sessionNotice}</Text>
+                </View>
+              )}
               <View style={styles.authGateTag}>
                 <Text style={styles.authGateTagText}>AKSES TERDAFTAR</Text>
               </View>
@@ -408,20 +617,22 @@ export default function LaporScreen() {
                   <TouchableOpacity
                     activeOpacity={0.85}
                     style={[styles.uploadBtn, { flex: 1, marginBottom: 0 }]}
-                    onPress={() => handlePickImage(false)}>
+                    onPress={() => handlePickImage(false)}
+                    disabled={uploadStatus === 'uploading'}>
                     <Text style={styles.uploadBtnText} numberOfLines={1}>
                       {imageFile ? `Ganti Foto (${imageFile.name})` : 'Pilih Foto Kondisi Jalan'}
                     </Text>
                   </TouchableOpacity>
 
-                  {Platform.OS !== 'web' && (
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      style={styles.cameraBtn}
-                      onPress={() => handlePickImage(true)}>
-                      <Text style={styles.uploadBtnText}>Kamera</Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    style={[styles.cameraBtn, uploadStatus === 'uploading' && styles.btnDisabled]}
+                    onPress={() => handlePickImage(true)}
+                    disabled={uploadStatus === 'uploading'}>
+                    <Text style={styles.uploadBtnText}>
+                      {Platform.OS === 'web' ? 'Kamera Web' : 'Kamera'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 {previewUri ? (
@@ -433,6 +644,31 @@ export default function LaporScreen() {
                         resizeMode="cover"
                       />
                     </View>
+
+                    {uploadStatus !== 'idle' && (
+                      <View
+                        style={[
+                          styles.uploadStatusBox,
+                          uploadStatus === 'uploaded' && styles.uploadStatusSuccess,
+                          uploadStatus === 'error' && styles.uploadStatusError,
+                        ]}>
+                        <View style={styles.uploadStatusRow}>
+                          {uploadStatus === 'uploading' && (
+                            <ActivityIndicator size="small" color={Palette.ink} />
+                          )}
+                          <Text style={styles.uploadStatusText}>{uploadStatusMsg}</Text>
+                        </View>
+                        {uploadStatus === 'error' && imageFile && (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            style={styles.retryUploadBtn}
+                            onPress={() => autoUploadSelectedImage(imageFile)}>
+                            <Text style={styles.retryUploadBtnText}>Coba Unggah Ulang</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+
                     <Text style={styles.previewHint}>
                       {analysisData
                         ? 'Foto telah dianalisis. Lihat kotak deteksi dan akurasi YOLO pada Langkah 03 di bawah.'
@@ -443,7 +679,7 @@ export default function LaporScreen() {
                   <View style={styles.emptyPreviewBox}>
                     <Text style={styles.emptyPreviewTitle}>Belum ada foto dipilih</Text>
                     <Text style={styles.emptyPreviewSub}>
-                      Pratinjau foto akan tampil di sini sebelum dianalisis.
+                      Pilih gambar dari perangkat atau gunakan kamera untuk memfoto langsung dan mengunggah otomatis ke sistem.
                     </Text>
                   </View>
                 )}
@@ -483,7 +719,7 @@ export default function LaporScreen() {
                     setAddress(text);
                     setAddressAutoFilled(text.trim() === '');
                   }}
-                  placeholder="Klik Gunakan GPS atau masukkan nama jalan & kelurahan"
+                  placeholder="Masukkan nama jalan atau klik Gunakan GPS"
                   placeholderTextColor={Palette.inkSubtle}
                 />
                 {gpsHint && <Text style={styles.gpsHintText}>{gpsHint}</Text>}
@@ -764,6 +1000,14 @@ export default function LaporScreen() {
           )}
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
+      {Platform.OS === 'web' && (
+        <WebCameraModal
+          visible={webCameraOpen}
+          onClose={() => setWebCameraOpen(false)}
+          onCapture={handleWebCameraCapture}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1054,6 +1298,44 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Palette.inkMuted,
   },
+  uploadStatusBox: {
+    backgroundColor: Palette.yellow,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  uploadStatusSuccess: {
+    backgroundColor: Palette.success,
+  },
+  uploadStatusError: {
+    backgroundColor: Palette.danger,
+  },
+  uploadStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  uploadStatusText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.ink,
+  },
+  retryUploadBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.surface,
+    borderWidth: 2,
+    borderColor: Palette.ink,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  retryUploadBtnText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: Palette.ink,
+  },
   gpsBtn: {
     backgroundColor: Palette.success,
     borderWidth: 2,
@@ -1134,7 +1416,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   metricCell: {
-    width: '48.5%',
+    width: '48%',
     backgroundColor: Palette.surface,
     borderWidth: 2,
     borderColor: Palette.ink,

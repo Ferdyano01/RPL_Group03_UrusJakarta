@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import { MaxContentWidth, Palette } from '@/constants/theme';
@@ -14,8 +15,11 @@ const NAV_ITEMS: { key: NavTabKey; label: string; route: string }[] = [
 ];
 
 export function BottomNav({ active }: { active: NavTabKey }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'web' ? 0 : insets.bottom;
+
   return (
-    <View style={styles.outerWrap}>
+    <View style={[styles.outerWrap, bottomInset > 0 && { paddingBottom: bottomInset }]}>
       <View style={styles.bar}>
         {NAV_ITEMS.map((item, idx) => {
           const isActive = item.key === active;
@@ -31,7 +35,11 @@ export function BottomNav({ active }: { active: NavTabKey }) {
               ]}
               onPress={() => {
                 if (!isActive) {
-                  router.push(item.route as any);
+                  if (item.key === 'lapor') {
+                    router.push(item.route as any);
+                  } else {
+                    router.replace(item.route as any);
+                  }
                 }
               }}>
               <View style={[styles.indicator, isActive && styles.indicatorActive]} />
@@ -56,6 +64,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 2.5,
     borderTopColor: Palette.ink,
     alignItems: 'center',
+    zIndex: 50,
+    elevation: 12,
   },
   bar: {
     width: '100%',
