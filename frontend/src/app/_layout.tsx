@@ -25,11 +25,15 @@ const ROUTE_TITLES: Record<string, string> = {
 };
 
 export default function RootLayout() {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(() => Platform.OS === 'web');
   const pathname = usePathname();
   const pageTitle = ROUTE_TITLES[pathname] || 'UrusJakarta — Pelaporan Jalan Rusak DKI';
 
   useEffect(() => {
+    if (Platform.OS === 'web') {
+      void initAuthStorage();
+      return;
+    }
     initAuthStorage().finally(() => setReady(true));
   }, []);
 
@@ -51,6 +55,12 @@ export default function RootLayout() {
     <>
       <Head>
         <title>{pageTitle}</title>
+        <link
+          rel="preconnect"
+          href="https://knpnsivfufbrlowucugj.supabase.co"
+          crossOrigin="anonymous"
+        />
+        <link rel="dns-prefetch" href="https://knpnsivfufbrlowucugj.supabase.co" />
       </Head>
       <StatusBar style="dark" />
       <Stack

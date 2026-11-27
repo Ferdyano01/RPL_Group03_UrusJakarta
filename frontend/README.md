@@ -1,56 +1,90 @@
-# Welcome to your Expo app 👋
+# UrusJakarta Frontend (Web & Android)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Cross-platform **React Native + Expo SDK 57** frontend (with Expo Router and React Compiler) powering both the static Web portal (`https://urusjakarta.alamsyah.net`) and the Android mobile app (`com.urusjakarta.app`).
 
-## Get started
+---
 
-1. Install dependencies
+## Tech Stack & Structure
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```text
+frontend/
+├── app.json                         # Expo config, permissions, API URL fallback, plugins
+├── eas.json                         # EAS Build profiles (preview APK, production AAB)
+├── babel.config.js                  # Expo Babel preset (reanimated/worklets disabled)
+├── plugins/
+│   └── withAndroidOptimization.js   # Android ABI split, R8 minify/shrink, resource flags
+├── assets/images/                   # Pruned app icons & splash assets
+└── src/
+    ├── app/
+    │   ├── _layout.tsx              # Root Stack, SplashScreen, Web <Head> & preconnect
+    │   ├── index.tsx                # Landing overview & live system status bar
+    │   ├── signup.tsx               # Citizen login / registration screen
+    │   ├── beranda.tsx              # Dashboard metrics & recent reports feed
+    │   ├── lapor.tsx                # 3-step AI road damage reporting workflow
+    │   ├── riwayat.tsx              # Filterable / priority-sorted report history
+    │   ├── profil.tsx               # Account profile edit, agency info & logout
+    │   └── explore.tsx              # Interactive guide & severity/status legend
+    ├── components/
+    │   ├── bottom-nav.tsx           # Safe-area-aware bottom navigation bar
+    │   ├── report-detail-modal.tsx  # Report modal (YOLO viewer, status & RBAC panel)
+    │   ├── web-camera-modal.web.tsx # WebRTC camera capture with canvas resizing
+    │   └── yolo-detection-viewer.tsx# Interactive bounding-box overlay on road photos
+    └── services/
+        └── api.ts                   # REST client, JWT validation, caching, XHR uploads
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-### Other setup steps
+## Development Scripts
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+cd frontend
+npm install
 
-## Learn more
+# Run interactive Expo CLI
+npm start
 
-To learn more about developing your project with Expo, look at the following resources:
+# Run Web dev server (http://localhost:8081)
+npm run web
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+# Run Android app locally (requires Android SDK + JDK)
+npm run android
+```
 
-## Join the community
+---
 
-Join our community of developers creating universal apps.
+## Production Web Build (Static Export for Nginx)
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+`app.json` configures `"web": { "output": "static" }`. To build static HTML/JS/CSS into `frontend/dist/`:
+
+```bash
+cd frontend
+EXPO_PUBLIC_API_URL=https://urusjakarta.alamsyah.net npx expo export --platform web
+```
+
+Serve `frontend/dist/` behind Nginx with `try_files $uri $uri.html $uri/ /index.html;` and long-lived immutable caching on `/_expo/static/`.
+
+---
+
+## Android Build & APK Size Optimizations
+
+The project uses Expo Continuous Native Generation (CNG) plus [`plugins/withAndroidOptimization.js`](./plugins/withAndroidOptimization.js):
+- **ABI filtering (`armeabi-v7a,arm64-v8a`)**: Excludes x86/x86_64 emulator ABIs from release APK/AAB outputs.
+- **R8 Minification & Resource Shrinking**: Enables `android.enableMinifyInReleaseBuilds=true`, `android.enableShrinkResourcesInReleaseBuilds=true`, and bundle compression.
+- **Dependency Pruning & Autolinking Exclusions**: Removes unused template libraries (`react-native-reanimated`, `react-native-gesture-handler`, `react-native-worklets`, `expo-image`, `expo-symbols`, etc.) via `package.json` `expo.autolinking.android.exclude`.
+- **Native Multipart Upload Reliability**: Uses `XMLHttpRequest` in `src/services/api.ts` for native `FormData` uploads (`file://` and `content://`) alongside client-side JPEG compression on Web `<input type="file">` (`lapor.tsx`).
+
+### Useful Android Commands
+```bash
+# Regenerate native android/ Gradle project
+npm run prebuild:android
+
+# Build installable APK in cloud via EAS (preview profile)
+npm run build:android:apk
+
+# Build release APK locally (requires local Android SDK & JDK)
+npm run android:apk:local
+
+# Export Android JS/Hermes bundle check
+npm run build:android:bundle
+```

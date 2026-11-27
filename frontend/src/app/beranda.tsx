@@ -49,12 +49,17 @@ export default function Beranda() {
       setLoading(true);
     }
     setErrorMsg(null);
+
+    // Jalankan health check terpisah agar daftar laporan tidak tertahan timeout Road-AI
+    void checkSystemHealth(isPullRefresh).then(setHealth);
+
     try {
-      const [healthData, reportsRes] = await Promise.all([
-        checkSystemHealth(),
-        fetchAllReportsApi({ limit: 50 }),
-      ]);
-      setHealth(healthData);
+      const reportsRes = await fetchAllReportsApi({
+        status: 'SEMUA',
+        sort: 'newest',
+        limit: 50,
+        forceRefresh: isPullRefresh,
+      });
       setReports(reportsRes.data || []);
       hasLoadedOnce.current = true;
     } catch (err: any) {
@@ -133,34 +138,44 @@ export default function Beranda() {
             </View>
           </View>
 
-          {/* Status Strip */}
-          {health && (
-            <View style={styles.statusStrip}>
-              <View style={styles.statusItem}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    { backgroundColor: health.backendOnline ? Palette.success : Palette.danger },
-                  ]}
-                />
-                <Text style={styles.statusText}>
-                  Server: {health.backendOnline ? 'Terhubung' : 'Terputus'}
-                </Text>
-              </View>
-              <View style={styles.statusDivider} />
-              <View style={styles.statusItem}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    { backgroundColor: health.aiOnline ? Palette.success : Palette.yellow },
-                  ]}
-                />
-                <Text style={styles.statusText}>
-                  Deteksi Foto: {health.aiOnline ? 'Aktif' : 'Siaga'}
-                </Text>
-              </View>
+          {/* Status Strip (selalu di-render agar tidak memicu layout shift CLS) */}
+          <View style={styles.statusStrip}>
+            <View style={styles.statusItem}>
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: health
+                      ? health.backendOnline
+                        ? Palette.success
+                        : Palette.danger
+                      : Palette.yellow,
+                  },
+                ]}
+              />
+              <Text style={styles.statusText}>
+                Server: {health ? (health.backendOnline ? 'Terhubung' : 'Terputus') : 'Memeriksa...'}
+              </Text>
             </View>
-          )}
+            <View style={styles.statusDivider} />
+            <View style={styles.statusItem}>
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: health
+                      ? health.aiOnline
+                        ? Palette.success
+                        : Palette.yellow
+                      : Palette.surfaceAlt,
+                  },
+                ]}
+              />
+              <Text style={styles.statusText}>
+                Deteksi Foto: {health ? (health.aiOnline ? 'Aktif' : 'Siaga') : 'Memeriksa...'}
+              </Text>
+            </View>
+          </View>
 
           {/* Hero CTA Card */}
           <TouchableOpacity

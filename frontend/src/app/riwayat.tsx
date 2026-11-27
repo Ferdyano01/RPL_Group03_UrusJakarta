@@ -73,6 +73,7 @@ export default function Riwayat() {
           status: activeFilter,
           sort: sortBy,
           limit: 50,
+          forceRefresh: isPullRefresh,
         });
         setReports(res.data || []);
       }

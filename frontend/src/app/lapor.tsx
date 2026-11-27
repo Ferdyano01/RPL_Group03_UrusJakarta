@@ -44,8 +44,75 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 ]);
 const AUTO_UPLOAD_MAX_BYTES = 4.8 * 1024 * 1024;
 const HARD_MAX_BYTES = 9.8 * 1024 * 1024;
+const WEB_COMPRESS_THRESHOLD_BYTES = 350 * 1024;
+const WEB_MAX_IMAGE_SIDE = 1600;
+const WEB_JPEG_QUALITY = 0.82;
 const SESSION_EXPIRED_FALLBACK_MSG =
   'Sesi login Anda telah berakhir atau tidak valid. Silakan masuk kembali.';
+
+const optimizeWebImageFile = async (file: File): Promise<File> => {
+  if (
+    typeof window === 'undefined' ||
+    typeof document === 'undefined' ||
+    typeof globalThis.Image === 'undefined'
+  ) {
+    return file;
+  }
+
+  const normalizedType = (file.type || '').toLowerCase();
+  const shouldOptimize =
+    normalizedType === 'image/png' || file.size > WEB_COMPRESS_THRESHOLD_BYTES;
+  if (!shouldOptimize) {
+    return file;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new globalThis.Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Gagal memuat gambar'));
+      el.src = objectUrl;
+    });
+
+    const srcWidth = img.naturalWidth || img.width;
+    const srcHeight = img.naturalHeight || img.height;
+    if (!srcWidth || !srcHeight) {
+      return file;
+    }
+
+    const scale = Math.min(1, WEB_MAX_IMAGE_SIDE / Math.max(srcWidth, srcHeight));
+    const needsResize = scale < 1;
+    const isHeavyPng = normalizedType === 'image/png' && file.size > 150 * 1024;
+    if (!needsResize && !isHeavyPng && file.size <= WEB_COMPRESS_THRESHOLD_BYTES) {
+      return file;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(srcWidth * scale));
+    canvas.height = Math.max(1, Math.round(srcHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return file;
+    }
+
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', WEB_JPEG_QUALITY)
+    );
+    if (!blob || blob.size >= file.size) {
+      return file;
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') || `road-${Date.now()}`;
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
 
 export default function LaporScreen() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
@@ -197,20 +264,28 @@ export default function LaporScreen() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'image/jpeg,image/png,image/webp';
-        input.onchange = (e: any) => {
-          const file = e.target?.files?.[0];
-          if (file) {
-            const uri = URL.createObjectURL(file);
-            applySelectedImage(
-              {
-                uri,
-                name: file.name,
-                type: file.type || 'image/jpeg',
-                webFile: file,
-              },
-              true
+        input.onchange = async (e: any) => {
+          const rawFile: File | undefined = e.target?.files?.[0];
+          if (!rawFile) return;
+
+          const optimizedFile = await optimizeWebImageFile(rawFile);
+          if (optimizedFile.size > HARD_MAX_BYTES) {
+            setErrorMsg(
+              'Ukuran foto melebihi batas 10 MB. Pilih foto lain yang lebih kecil.'
             );
+            return;
           }
+
+          const uri = URL.createObjectURL(optimizedFile);
+          applySelectedImage(
+            {
+              uri,
+              name: optimizedFile.name,
+              type: optimizedFile.type || 'image/jpeg',
+              webFile: optimizedFile,
+            },
+            optimizedFile.size <= AUTO_UPLOAD_MAX_BYTES
+          );
         };
         input.click();
         return;

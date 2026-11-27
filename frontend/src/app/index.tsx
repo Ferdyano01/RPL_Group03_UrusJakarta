@@ -125,33 +125,45 @@ export default function Index() {
           </View>
 
           {/* System Status Footer */}
-          {health && (
-            <View style={styles.statusBar}>
-              <View style={styles.statusItem}>
-                <View
-                  style={[
-                    styles.statusSquare,
-                    { backgroundColor: health.backendOnline ? Palette.success : Palette.danger },
-                  ]}
-                />
-                <Text style={styles.statusText}>
-                  Server Layanan: {health.backendOnline ? 'Terhubung' : 'Tidak Terjangkau'}
-                </Text>
-              </View>
-              <View style={styles.statusDivider} />
-              <View style={styles.statusItem}>
-                <View
-                  style={[
-                    styles.statusSquare,
-                    { backgroundColor: health.aiOnline ? Palette.success : Palette.yellow },
-                  ]}
-                />
-                <Text style={styles.statusText}>
-                  Deteksi Foto: {health.aiOnline ? 'Aktif' : 'Siaga'}
-                </Text>
-              </View>
+          <View style={styles.statusBar}>
+            <View style={styles.statusItem}>
+              <View
+                style={[
+                  styles.statusSquare,
+                  {
+                    backgroundColor: health
+                      ? health.backendOnline
+                        ? Palette.success
+                        : Palette.danger
+                      : Palette.yellow,
+                  },
+                ]}
+              />
+              <Text style={styles.statusText}>
+                Server Layanan:{' '}
+                {health ? (health.backendOnline ? 'Terhubung' : 'Tidak Terjangkau') : 'Memeriksa...'}
+              </Text>
             </View>
-          )}
+            <View style={styles.statusDivider} />
+            <View style={styles.statusItem}>
+              <View
+                style={[
+                  styles.statusSquare,
+                  {
+                    backgroundColor: health
+                      ? health.aiOnline
+                        ? Palette.success
+                        : Palette.yellow
+                      : Palette.surfaceAlt,
+                  },
+                ]}
+              />
+              <Text style={styles.statusText}>
+                Deteksi Foto:{' '}
+                {health ? (health.aiOnline ? 'Aktif' : 'Siaga') : 'Memeriksa...'}
+              </Text>
+            </View>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>

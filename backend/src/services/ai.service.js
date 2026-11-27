@@ -688,36 +688,64 @@ Kembalikan HANYA objek JSON valid: {"title": "...", "description": "..."}`;
   };
 };
 
+const ROAD_AI_HEALTH_CACHE_MS = 10_000;
+const ROAD_AI_HEALTH_TIMEOUT_MS = 2000;
+let cachedRoadAiHealth = null;
+let inFlightRoadAiHealth = null;
+
 /**
- * Mengecek status ketersediaan service FastAPI Road-AI
+ * Mengecek status ketersediaan service FastAPI Road-AI (dengan cache singkat 10 detik)
  */
 export const checkRoadAiHealth = async () => {
-  try {
-    const response = await fetch(`${ROAD_AI_URL}/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-    });
-    if (response.ok) {
-      const data = await response.json();
-      return {
-        available: data.status === 'ok',
-        model_loaded: Boolean(data.model_loaded),
-        mode: 'fastapi_service',
+  const now = Date.now();
+  if (cachedRoadAiHealth && cachedRoadAiHealth.expiresAt > now) {
+    return cachedRoadAiHealth.value;
+  }
+  if (inFlightRoadAiHealth) {
+    return inFlightRoadAiHealth;
+  }
+
+  inFlightRoadAiHealth = (async () => {
+    let result;
+    try {
+      const response = await fetch(`${ROAD_AI_URL}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(ROAD_AI_HEALTH_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        result = {
+          available: data.status === 'ok',
+          model_loaded: Boolean(data.model_loaded),
+          mode: 'fastapi_service',
+          url: ROAD_AI_URL,
+        };
+      }
+    } catch {
+      // Cek ketersediaan model lokal
+    }
+
+    if (!result) {
+      const hasLocalYolo =
+        fs.existsSync(LOCAL_VENV_PYTHON) && fs.existsSync(LOCAL_YOLO_MODEL);
+      result = {
+        available: hasLocalYolo,
+        model_loaded: hasLocalYolo,
+        mode: hasLocalYolo ? 'local_python_yolo' : 'offline',
         url: ROAD_AI_URL,
       };
     }
-  } catch {
-    // Cek ketersediaan model lokal
-  }
 
-  const hasLocalYolo =
-    fs.existsSync(LOCAL_VENV_PYTHON) && fs.existsSync(LOCAL_YOLO_MODEL);
-  return {
-    available: hasLocalYolo,
-    model_loaded: hasLocalYolo,
-    mode: hasLocalYolo ? 'local_python_yolo' : 'offline',
-    url: ROAD_AI_URL,
-  };
+    cachedRoadAiHealth = {
+      value: result,
+      expiresAt: Date.now() + ROAD_AI_HEALTH_CACHE_MS,
+    };
+    return result;
+  })().finally(() => {
+    inFlightRoadAiHealth = null;
+  });
+
+  return inFlightRoadAiHealth;
 };
 
 /**

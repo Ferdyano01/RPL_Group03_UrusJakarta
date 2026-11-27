@@ -177,6 +177,31 @@ const getReportPriorityScore = (report) =>
   Number(report?.ai_analysis?.priority_score ?? report?.priority_score ?? 0);
 
 /**
+ * Meringkas metadata ai_analysis untuk endpoint list agar payload feed tetap ringan
+ * (detail penuh detections & location_context tetap tersedia di GET /api/reports/:id).
+ */
+const summarizeAiAnalysisForList = (ai) => {
+  if (!ai || typeof ai !== 'object') return null;
+  const summary = {
+    total_detections: Number(ai.total_detections ?? 0),
+    support_count: Number(ai.support_count ?? 1),
+  };
+  if (ai.priority_score !== undefined) summary.priority_score = ai.priority_score;
+  if (ai.strategic_score !== undefined) summary.strategic_score = ai.strategic_score;
+  if (ai.effective_severity !== undefined) summary.effective_severity = ai.effective_severity;
+  if (ai.primary_damage_label !== undefined) {
+    summary.primary_damage_label = ai.primary_damage_label;
+  }
+  if (ai.max_confidence !== undefined) summary.max_confidence = ai.max_confidence;
+  return summary;
+};
+
+const formatReportForList = (report) => ({
+  ...report,
+  ai_analysis: summarizeAiAnalysisForList(report?.ai_analysis),
+});
+
+/**
  * Mengambil daftar semua laporan dengan dukungan filter, pengurutan (terbaru/prioritas), dan paginasi
  */
 export const getAllReports = async ({
@@ -260,12 +285,12 @@ export const getAllReports = async ({
       const total = filtered.length;
       const paged = filtered.slice(from, to + 1).map((r) => {
         const u = db.users.find((usr) => usr.id === r.user_id);
-        return {
+        return formatReportForList({
           ...r,
           reporter: u
             ? { id: u.id, full_name: u.full_name, role: u.role }
             : null,
-        };
+        });
       });
       return {
         reports: paged,
@@ -295,7 +320,7 @@ export const getAllReports = async ({
   }
 
   return {
-    reports: finalReports,
+    reports: finalReports.map(formatReportForList),
     pagination: {
       total: totalCount,
       page: pageNum,
@@ -341,7 +366,7 @@ export const getReportsByUser = async (userId, { status, page = 1, limit = 20 } 
       );
       const filtered = filterLocalReports(sorted, { status, userId });
       const total = filtered.length;
-      const paged = filtered.slice(from, to + 1);
+      const paged = filtered.slice(from, to + 1).map(formatReportForList);
       return {
         reports: paged,
         pagination: {
@@ -357,7 +382,7 @@ export const getReportsByUser = async (userId, { status, page = 1, limit = 20 } 
 
   setStorageMode('supabase');
   return {
-    reports: data || [],
+    reports: (data || []).map(formatReportForList),
     pagination: {
       total: count || 0,
       page: pageNum,

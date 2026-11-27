@@ -622,28 +622,71 @@ const apiRequest = async <T>(
   return json as T;
 };
 
-export const checkSystemHealth = async () => {
-  try {
-    const res = await apiRequest<{
-      status: string;
-      message: string;
-      storage_mode?: string;
-      ai_service?: { available: boolean; model_loaded: boolean; url: string };
-    }>('/api/health');
-    return {
-      backendOnline: true,
-      storageMode: res.storage_mode || 'supabase',
-      aiOnline: Boolean(res.ai_service?.available),
-      modelLoaded: Boolean(res.ai_service?.model_loaded),
-    };
-  } catch {
-    return {
-      backendOnline: false,
-      storageMode: 'offline',
-      aiOnline: false,
-      modelLoaded: false,
-    };
+const HEALTH_CACHE_TTL_MS = 10_000;
+const REPORTS_CACHE_TTL_MS = 15_000;
+
+interface HealthSummary {
+  backendOnline: boolean;
+  storageMode: string;
+  aiOnline: boolean;
+  modelLoaded: boolean;
+}
+
+interface ReportsListPayload {
+  status: string;
+  data: ReportItem[];
+  pagination: { total: number; page: number; limit: number; total_pages: number };
+}
+
+let cachedHealthEntry: { value: HealthSummary; expiresAt: number } | null = null;
+let inFlightHealthRequest: Promise<HealthSummary> | null = null;
+
+const reportsListCache = new Map<string, { value: ReportsListPayload; expiresAt: number }>();
+const inFlightReportsRequests = new Map<string, Promise<ReportsListPayload>>();
+
+export const invalidateReportsCache = () => {
+  reportsListCache.clear();
+  inFlightReportsRequests.clear();
+};
+
+export const checkSystemHealth = async (forceRefresh = false): Promise<HealthSummary> => {
+  const now = Date.now();
+  if (!forceRefresh && cachedHealthEntry && cachedHealthEntry.expiresAt > now) {
+    return cachedHealthEntry.value;
   }
+  if (!forceRefresh && inFlightHealthRequest) {
+    return inFlightHealthRequest;
+  }
+
+  inFlightHealthRequest = (async () => {
+    try {
+      const res = await apiRequest<{
+        status: string;
+        message: string;
+        storage_mode?: string;
+        ai_service?: { available: boolean; model_loaded: boolean; url: string };
+      }>('/api/health');
+      const result: HealthSummary = {
+        backendOnline: true,
+        storageMode: res.storage_mode || 'supabase',
+        aiOnline: Boolean(res.ai_service?.available),
+        modelLoaded: Boolean(res.ai_service?.model_loaded),
+      };
+      cachedHealthEntry = { value: result, expiresAt: Date.now() + HEALTH_CACHE_TTL_MS };
+      return result;
+    } catch {
+      return {
+        backendOnline: false,
+        storageMode: 'offline',
+        aiOnline: false,
+        modelLoaded: false,
+      };
+    } finally {
+      inFlightHealthRequest = null;
+    }
+  })();
+
+  return inFlightHealthRequest;
 };
 
 export const registerUserApi = async (payload: {
@@ -793,6 +836,7 @@ export const createReportApi = async (params: {
       method: 'POST',
       body: formData,
     });
+    invalidateReportsCache();
     return res.data;
   }
 
@@ -811,6 +855,7 @@ export const createReportApi = async (params: {
       status: params.status,
     }),
   });
+  invalidateReportsCache();
   return res.data;
 };
 
@@ -822,22 +867,42 @@ export const fetchAllReportsApi = async (params?: {
   sort?: 'newest' | 'priority';
   page?: number;
   limit?: number;
-}) => {
+  forceRefresh?: boolean;
+}): Promise<ReportsListPayload> => {
   const qs = new URLSearchParams();
-  if (params?.status) qs.set('status', params.status);
+  qs.set('status', params?.status || 'SEMUA');
   if (params?.category) qs.set('category', params.category);
   if (params?.severity) qs.set('severity', params.severity);
   if (params?.search) qs.set('search', params.search);
-  if (params?.sort) qs.set('sort', params.sort);
-  if (params?.page) qs.set('page', String(params.page));
-  if (params?.limit) qs.set('limit', String(params.limit));
+  qs.set('sort', params?.sort || 'newest');
+  qs.set('page', String(params?.page || 1));
+  qs.set('limit', String(params?.limit || 50));
 
-  const queryString = qs.toString() ? `?${qs.toString()}` : '';
-  return apiRequest<{
-    status: string;
-    data: ReportItem[];
-    pagination: { total: number; page: number; limit: number; total_pages: number };
-  }>(`/api/reports${queryString}`);
+  const queryString = `?${qs.toString()}`;
+  const now = Date.now();
+  const cached = reportsListCache.get(queryString);
+  if (!params?.forceRefresh && cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  const existing = inFlightReportsRequests.get(queryString);
+  if (!params?.forceRefresh && existing) {
+    return existing;
+  }
+
+  const reqPromise = apiRequest<ReportsListPayload>(`/api/reports${queryString}`)
+    .then((data) => {
+      reportsListCache.set(queryString, {
+        value: data,
+        expiresAt: Date.now() + REPORTS_CACHE_TTL_MS,
+      });
+      return data;
+    })
+    .finally(() => {
+      inFlightReportsRequests.delete(queryString);
+    });
+
+  inFlightReportsRequests.set(queryString, reqPromise);
+  return reqPromise;
 };
 
 export interface ReverseGeocodeResponse {
@@ -872,6 +937,7 @@ export const confirmDuplicateReportApi = async (
       body: JSON.stringify({ notes }),
     }
   );
+  invalidateReportsCache();
   return res.data;
 };
 
@@ -914,13 +980,16 @@ export const updateReportApi = async (
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+  invalidateReportsCache();
   return res.data;
 };
 
 export const deleteReportApi = async (id: string) => {
-  return apiRequest<{ status: string; message: string }>(`/api/reports/${id}`, {
+  const res = await apiRequest<{ status: string; message: string }>(`/api/reports/${id}`, {
     method: 'DELETE',
   });
+  invalidateReportsCache();
+  return res;
 };
 
 export const routeReportToAuthorityApi = async (
@@ -934,6 +1003,7 @@ export const routeReportToAuthorityApi = async (
       body: JSON.stringify(payload || {}),
     }
   );
+  invalidateReportsCache();
   return res.data;
 };
 
